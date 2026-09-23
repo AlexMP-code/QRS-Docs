@@ -1,0 +1,3761 @@
+openapi: 3.0.3
+info:
+  title: QRS - Queue Reservation System API
+  description: |
+    ระบบจัดการคิวสำรองนัดหมาย รพ.สต. จ.ลำพูน (Queue Reservation System for 71 Health Centers in Lamphun Province)
+
+    โครงสร้าง API Specification นี้จัดกลุ่มตาม **Feature-First Pattern** เพื่อความง่ายในการพัฒนาและไล่เรียง Workflow
+
+    ## Core Roles & Permissions
+    - `SUPER_ADMIN` (role_id=1) — ผู้ดูแลระบบระดับจังหวัด จัดการทุกอย่างข้ามศูนย์ (cross-tenant)
+    - `HEALTH_CENTER_ADMIN` (role_id=2) — ผู้ดูแล รพ.สต. จัดการข้อมูลของศูนย์ตนเอง
+    - `STAFF` (role_id=3) — เจ้าหน้าที่ห้องตรวจ ออกคิว Walk-in และจัดการคิวประจำวัน
+    - `Patient` — ประชาชน / ผู้รับบริการ
+
+    ## Rate Limiting Constraints
+    - Staff login: 5 ครั้ง/30 นาที (ผิด 5 ครั้ง → ล็อกชั่วคราว 30 นาที)
+    - Patient login: 10 req/min (key by เบอร์โทร)
+    - Patient register: 5 req/min (key by IP)
+    - Unmask patient data: 10 req/min (key by user)
+  version: 1.0.0
+  contact:
+    name: QRS Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://192.168.12.174:8000/api
+    description: Local Development (e.g. Laravel Sail / Docker Compose)
+  - url: https://qrs-api.lamphunpao.go.th/api
+    description: Production (113.53.237.10)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: "1. Authentication & Profile"
+    description: ระบบยืนยันตัวตน, ลงทะเบียน, จัดการโปรไฟล์ส่วนตัว และจัดการบัญชีผู้ใช้งานระบบ
+  - name: "2. Health Center Management"
+    description: ค้นหา รพ.สต., ดูรายละเอียด, จัดการข้อมูลศูนย์ และสลับสถานะเปิด/ปิดรับจอง (ACTIVE/CLOSING/INACTIVE)
+  - name: "3. Service Management"
+    description: จัดการบริการ (Services), มอบหมายเจ้าหน้าที่ดูแล และกำหนดวันเปิดให้บริการ (Operating Days)
+  - name: "4. Time Slot Master"
+    description: จัดการ Master Time Slots ช่วงเวลาให้บริการระดับจังหวัด (CRUD Time Slots)
+  - name: "5. Roster & Staff Leave"
+    description: จัดการตารางปฏิบัติงาน, รายชื่อบุคลากร, สลับเวร และลงวันลา (Leave Management)
+  - name: "6. Appointment & Queue"
+    description: ตรวจสอบสล็อตว่าง, จองคิวออนไลน์, ออกคิว Walk-in, เปลี่ยนสถานะคิว และดูประวัตินัดหมาย
+  - name: "7. Patient Data & PDPA Privacy"
+    description: ค้นหาผู้รับบริการ, แก้ไขโปรไฟล์/เบอร์โทรผู้ป่วย และ Unmask ข้อมูลจริง (PDPA Audit Trigger)
+  - name: "8. System Integrations"
+    description: ตั้งค่าการเชื่อมต่อระบบภายนอก (Discord Webhook Notifications)
+
+paths:
+
+  # ══════════════════════════════════════════════════════════
+  # 1. AUTHENTICATION & PROFILE
+  # ══════════════════════════════════════════════════════════
+
+  /v1/patient/login:
+    post:
+      tags: ["1. Authentication & Profile"]
+      summary: "[Public] เข้าสู่ระบบผู้รับบริการ (Phone + DOB)"
+      description: |
+        ใช้ เบอร์โทรศัพท์ + วันเกิด
+        ถ้าไม่พบประวัติในระบบ → is_registered = false
+        (token=null, patient=null, message="ไม่พบประวัติผู้รับบริการ กรุณาลงทะเบียนใหม่")
+        ระบุวันเกิดผิด 5 ครั้ง → ระงับการล็อกอินของเบอร์นี้ 30 นาที (423)
+        Throttle: 10 req/min key by เบอร์โทร
+      operationId: patientLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone_number, birth_date]
+              properties:
+                phone_number:
+                  type: string
+                  pattern: "^[0-9]{10}$"
+                  example: "0812345678"
+                birth_date:
+                  type: string
+                  format: date
+                  example: "1990-01-15"
+      responses:
+        "200":
+          description: สำเร็จ — ถ้ามีบัญชีจะได้ token, ถ้าไม่มีจะได้ is_registered = false
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/PatientLoginSuccess"
+                  - $ref: "#/components/schemas/PatientLoginNotRegistered"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "423":
+          description: |
+            ล็อกชั่วคราว 30 นาที — ระบุวันเกิดผิด 5 ครั้งต่อเนื่อง
+            (เฉพาะส่วนของการตรวจสอบวันเกิด)
+        "429":
+          description: Rate limit exceeded (10 req/min) — key by เบอร์โทร
+      security: []
+
+  /v1/patient/register:
+    post:
+      tags: ["1. Authentication & Profile"]
+      summary: "[Public] ลงทะเบียนผู้รับบริการใหม่"
+      operationId: patientRegister
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientRegisterRequest"
+      responses:
+        "201":
+          description: ลงทะเบียนสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ลงทะเบียนสำเร็จ"
+                      token:
+                        type: string
+                      patient:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          masked_name:
+                            type: string
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: Rate limit exceeded (5 req/min)
+      security: []
+
+  /v1/staff/login:
+    post:
+      tags: ["1. Authentication & Profile"]
+      summary: "[Public] เข้าสู่ระบบเจ้าหน้าที่ (Username + Password)"
+      operationId: staffLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: "admin"
+                password:
+                  type: string
+                  format: password
+                  example: "password"
+      responses:
+        "200":
+          description: เข้าสู่ระบบสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      token:
+                        type: string
+                        example: "1|abc123..."
+                      user:
+                        $ref: "#/components/schemas/StaffUser"
+        "422":
+          description: |
+            ข้อมูลไม่ถูกต้อง — ระบุ username/password ไม่ครบ หรือ
+            ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง
+            (`{'username': ['ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง']}`)
+        "403":
+          description: |
+            ไม่สามารถเข้าสู่ระบบได้ —
+            ยังไม่ได้ผูกกับ รพ.สต. (ยกเว้น SUPER_ADMIN) หรือ
+            รพ.สต. ของบัญชีมีสถานะไม่ใช่ ACTIVE
+        "429":
+          description: |
+            พยายามเข้าสู่ระบบมากเกินไป (throttle:staff) —
+            5 ครั้ง/30 นาที key by username+IP → ล็อกชั่วคราว 30 นาที
+      security: []
+
+  /v1/patient/me:
+    get:
+      tags: ["1. Authentication & Profile"]
+      summary: "[Patient] ข้อมูลผู้รับบริการปัจจุบัน (Masked)"
+      operationId: patientMe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PatientProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/me:
+    get:
+      tags: ["1. Authentication & Profile"]
+      summary: "[Staff All] ข้อมูลโปรไฟล์เจ้าหน้าที่ปัจจุบัน"
+      operationId: staffMe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      user:
+                        $ref: "#/components/schemas/StaffResource"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    patch:
+      tags: ["1. Authentication & Profile"]
+      summary: "[Staff All] แก้ไขโปรไฟล์เจ้าหน้าที่ (ชื่อ / รหัสผ่าน)"
+      operationId: staffUpdateProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                current_password:
+                  type: string
+                  description: จำเป็นถ้าต้องการเปลี่ยนรหัสผ่าน
+                password:
+                  type: string
+                  minLength: 6
+                password_confirmation:
+                  type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "อัปเดตโปรไฟล์สำเร็จ"
+                      user:
+                        $ref: "#/components/schemas/StaffResource"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/logout:
+    post:
+      tags: ["1. Authentication & Profile"]
+      summary: "[Staff All] ออกจากระบบเจ้าหน้าที่"
+      operationId: staffLogout
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ออกจากระบบเรียบร้อยแล้ว"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/admin/users:
+    get:
+      tags: ["1. Authentication & Profile"]
+      summary: "[HC Admin / Super Admin] รายชื่อผู้ใช้ระบบ (กรอง/ค้นหา)"
+      description: |
+        SUPER_ADMIN เห็นทุกศูนย์; HC_ADMIN เห็นเฉพาะบัญชีในศูนย์ตนเอง
+        แสดงเฉพาะผู้ใช้ที่ยังไม่ถูกลบ (soft delete) — บัญชีที่ลบไปแล้วจะไม่ปรากฏในผลลัพธ์
+      operationId: adminListUsers
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: ค้นหาตามชื่อหรือ username
+        - name: health_center_id
+          in: query
+          schema:
+            type: integer
+          description: กรองตาม รพ.สต.
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, INACTIVE]
+          description: กรองตามสถานะบัญชีผู้ใช้
+        - name: role_ids
+          in: query
+          schema:
+            type: array
+            items:
+              type: integer
+          description: กรองตาม role
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, name, username, status, created_at]
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaginatedUsers"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      tags: ["1. Authentication & Profile"]
+      summary: "[HC Admin / Super Admin] สร้างบัญชีผู้ใช้ระบบใหม่"
+      description: |
+        HC_ADMIN สร้างได้เฉพาะ role STAFF เท่านั้น
+        ทุกการสร้างสำเร็จถูกบันทึก audit_logs (`USER_CREATED` — username, name, health_center_id, role_ids)
+      operationId: adminCreateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreUserRequest"
+      responses:
+        "201":
+          description: สร้างสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "สร้างผู้ใช้สำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/UserResource"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/staff/admin/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+
+    patch:
+      tags: ["1. Authentication & Profile"]
+      summary: "[HC Admin / Super Admin] แก้ไขข้อมูลผู้ใช้ระบบ"
+      description: |
+        HC_ADMIN: อัปเดตเฉพาะผู้ใช้ในศูนย์ตัวเอง, role_ids จำกัดเฉพาะ STAFF,
+        ไม่สามารถแก้ไข SUPER_ADMIN หรือย้ายผู้ใช้ข้ามศูนย์ได้
+        - แก้ไขบัญชีที่ถูกลบไปแล้ว (soft delete) → 404 "ไม่พบผู้ใช้ที่ระบุ"
+        - ถอด role SUPER_ADMIN หรือตั้ง status = INACTIVE ให้ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE → 422 "ไม่สามารถแก้ไขบัญชี SUPER_ADMIN คนสุดท้ายได้"
+        - ทุกการแก้ไขสำเร็จถูกบันทึก audit_logs (`USER_UPDATED` — เก็บ name/status/role_ids ก่อน-หลัง)
+      operationId: adminUpdateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "แก้ไขผู้ใช้สำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/UserResource"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    delete:
+      tags: ["1. Authentication & Profile"]
+      summary: "[HC Admin / Super Admin] ลบผู้ใช้ระบบ (soft delete — ห้ามลบตัวเอง / SUPER_ADMIN / มีคิวอนาคต)"
+      description: |
+        **Soft delete** — ผู้ใช้ถูกลบแบบ soft (ตั้ง `deleted_at`) และไม่มี endpoint กู้คืน:
+        - บัญชีหายจากรายชื่อผู้ใช้ และ login ไม่ได้อีกต่อไป
+        - บุคลากรใน roster ของบัญชีถูกตัดออก: `staff.user_id` → null, `staff.status` → INACTIVE (ยังอยู่ใน roster)
+        - เลิกผูกบริการที่ผู้ป่วยเลือกได้ (`service_user`) และเพิกถอน token (Sanctum) ทั้งหมด
+        - เก็บประวัติ `user_roles` / `staff_leaves` / `audit_logs` ไว้; username/email เดิมไม่ถูกนำมาใช้ซ้ำ
+
+        Guard ที่ห้ามลบ (422):
+        - ลบบัญชีของตนเอง → "ไม่สามารถลบบัญชีของตนเองได้"
+        - ลบ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE → "ไม่สามารถลบบัญชี SUPER_ADMIN คนสุดท้ายได้"
+        - บัญชีมีคิว CONFIRMED ในอนาคต (วันนี้เป็นต้นไป) ผูกกับบุคลากรใน roster → "ไม่สามารถลบบัญชีผู้ใช้ได้ เนื่องจากมีคิวที่จองไว้แล้ว N คิว กรุณาจัดการคิวก่อน"
+        - HC_ADMIN พยายามลบ SUPER_ADMIN → 403 "ไม่สามารถลบบัญชี Super Admin ได้"
+
+        ทุกการลบสำเร็จถูกบันทึก audit_logs (`USER_DELETED` — username, name, health_center_id, staff_ids)
+      operationId: adminDeleteUser
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ลบผู้ใช้สำเร็จ"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: "ไม่สามารถลบได้ต่อเมื่อ — ลบบัญชีของตนเอง / SUPER_ADMIN คนสุดท้ายที่ ACTIVE / มีคิว CONFIRMED อนาคตใน roster"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/staff/admin/roles:
+    get:
+      tags: ["1. Authentication & Profile"]
+      summary: "[HC Admin / Super Admin] รายชื่อ Role ที่สิทธิ์ตนเองมองเห็น (Dropdown)"
+      description: |
+        เฉพาะ SUPER_ADMIN / HEALTH_CENTER_ADMIN (STAFF เข้าไม่ได้ — 403)
+        SUPER_ADMIN เห็นทุก role; HC_ADMIN เห็นเฉพาะ STAFF
+      operationId: adminListRoles
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            name:
+                              type: string
+                            display_name:
+                              type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ══════════════════════════════════════════════════════════
+  # 2. HEALTH CENTER MANAGEMENT
+  # ══════════════════════════════════════════════════════════
+
+  /v1/patient/nearby-centers:
+    post:
+      tags: ["2. Health Center Management"]
+      summary: "[Public] ค้นหา รพ.สต. ใกล้เคียง (Haversine)"
+      operationId: patientSearchNearby
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [latitude, longitude, category_id]
+              properties:
+                latitude:
+                  type: number
+                  format: double
+                  minimum: -90
+                  maximum: 90
+                  example: 18.5895
+                longitude:
+                  type: number
+                  format: double
+                  minimum: -180
+                  maximum: 180
+                  example: 98.9833
+                category_id:
+                  type: integer
+                  example: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      count:
+                        type: integer
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/NearbyCenter"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+      security: []
+
+  /v1/patient/health-centers/{id}:
+    get:
+      tags: ["2. Health Center Management"]
+      summary: "[Public] รายละเอียด รพ.สต. (ชื่อ, ที่อยู่, พิกัด)"
+      operationId: patientGetCenterDetail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Health Center ID
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HealthCenterDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      security: []
+
+  /v1/staff/health-centers:
+    get:
+      tags: ["2. Health Center Management"]
+      summary: "[Staff All] รายชื่อ รพ.สต. (Dropdown สำหรับเจ้าหน้าที่)"
+      description: SUPER_ADMIN เห็นทุกศูนย์แบบเต็ม; HC_ADMIN/STAFF เห็นเฉพาะศูนย์ตนเองแบบย่อ (ACTIVE / CLOSING)
+      operationId: staffListHealthCenters
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          oneOf:
+                            - $ref: "#/components/schemas/StaffHealthCenterDropdown"
+                            - $ref: "#/components/schemas/HealthCenterDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/staff/admin/health-centers:
+    get:
+      tags: ["2. Health Center Management"]
+      summary: "[Super Admin] รายชื่อ รพ.สต. ทั้งหมด (ทุก Status + Paginated)"
+      operationId: adminListHealthCenters
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: ค้นหาชื่อศูนย์
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: province
+          in: query
+          schema:
+            type: string
+        - name: district
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [ACTIVE, CLOSING, INACTIVE]
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [id, name, code, status, created_at]
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaginatedHealthCenters"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/staff/health-centers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Health Center ID
+
+    patch:
+      tags: ["2. Health Center Management"]
+      summary: "[HC Admin / Super Admin] แก้ไขข้อมูล รพ.สต."
+      description: HC_ADMIN แก้ไขเฉพาะศูนย์ตนเอง; SUPER_ADMIN แก้ไขได้ทุกศูนย์และเพิ่ม `code` ได้
+      operationId: staffUpdateHealthCenter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateHealthCenterRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "แก้ไขข้อมูลสถานพยาบาลสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/HealthCenterDetail"
+        "403":
+          description: STAFF ไม่มีสิทธิ์
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/admin/health-centers/{id}/toggle-status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Health Center ID
+
+    patch:
+      tags: ["2. Health Center Management"]
+      summary: "[Super Admin] สลับสถานะเปิด/ปิดรับการจองศูนย์ (ACTIVE ↔ CLOSING / INACTIVE → ACTIVE)"
+      description: |
+        - ACTIVE: เปิดรับจอง
+        - CLOSING: ปิดรับการจองใหม่ แต่ยังให้บริการคิวเดิมที่ค้างอยู่
+        - INACTIVE: ปิดสมบูรณ์ (ซ่อนจากผู้ป่วย)
+      operationId: staffToggleHealthCenterStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [health_center_id]
+              properties:
+                health_center_id:
+                  type: integer
+                  description: ต้องตรงกับ id ใน path เสมอ
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "เปิดให้บริการรับการจองแล้ว"
+                      data:
+                        $ref: "#/components/schemas/HealthCenterStatusToggle"
+        "403":
+          description: ไม่ใช่ SUPER_ADMIN
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ══════════════════════════════════════════════════════════
+  # 3. SERVICE MANAGEMENT
+  # ══════════════════════════════════════════════════════════
+
+  /v1/patient/categories:
+    get:
+      tags: ["3. Service Management"]
+      summary: "[Public] หมวดหมู่บริการทั้งหมด"
+      operationId: patientGetCategories
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Category"
+      security: []
+
+  /v1/patient/health-centers/{id}/services:
+    get:
+      tags: ["3. Service Management"]
+      summary: "[Public] รายการบริการทั้งหมดของ รพ.สต."
+      operationId: patientGetCenterServices
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Health Center ID
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        description: รายการบริการแบบย่อ (PatientServiceBrief) — ใช้สำหรับหน้าจองของผู้ป่วย
+                        items:
+                          $ref: "#/components/schemas/PatientServiceBrief"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      security: []
+
+  /v1/staff/services:
+    get:
+      tags: ["3. Service Management"]
+      summary: "[Staff All] รายการบริการทั้งหมดของ รพ.สต."
+      description: |
+        ถ้าระบุ date → ซ่อนบริการที่ไม่มี staff ว่างวันนั้น
+        (staff-selection → หมอที่เลือกได้ลาทั้งหมด; ปกติ → staff มอบหมายลาทั้งหมด)
+      operationId: staffListServices
+      parameters:
+        - $ref: "#/components/parameters/HealthCenterIdFilter"
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: วันที่ต้องการตรวจ
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Service"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: ["3. Service Management"]
+      summary: "[Staff All] เพิ่มบริการใหม่"
+      operationId: staffCreateService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateServiceRequest"
+      responses:
+        "201":
+          description: สร้างสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "เพิ่มบริการสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/Service"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/services/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+
+    put:
+      tags: ["3. Service Management"]
+      summary: "[Staff All] แก้ไขข้อมูลบริการ"
+      description: |
+        ใช้แก้ไขชื่อ/หมวดหมู่/คำอธิบาย/ราคา/ระยะเวลา/เตือน/สถานะ
+        และเปิด-ปิด allow_staff_selection
+        - ถ้า allow_staff_selection = true ต้องมี selectable staff ที่ ACTIVE อย่างน้อย 1 คน
+        - STAFF: แก้ไขได้เฉพาะบริการในศูนย์ตัวเอง
+      operationId: staffUpdateService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateServiceRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "แก้ไขข้อมูลบริการสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/Service"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    delete:
+      tags: ["3. Service Management"]
+      summary: "[Staff All] ลบบริการ (Soft Delete)"
+      description: |
+        ลบได้เฉพาะบริการที่ไม่มีคิวสถานะ CONFIRMED ตั้งแต่วันนี้เป็นต้นไป
+        (ถ้ามี → 422 "ไม่สามารถลบบริการได้ เนื่องจากมีคิวล่วงหน้าอยู่ N คิว")
+      operationId: staffDeleteService
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ลบบริการเรียบร้อยแล้ว"
+        "422":
+          description: มีคิวล่วงหน้าอยู่
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/services/{id}/toggle-status:
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+
+    patch:
+      tags: ["3. Service Management"]
+      summary: "[Staff All] เปิด/ปิดสถานะบริการ"
+      description: สลับ is_active ของบริการ (STAFF - เฉพาะศูนย์ตัวเอง)
+      operationId: staffToggleServiceStatus
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ปรับปรุงสถานะบริการสำเร็จ"
+                      is_active:
+                        type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/services/{id}/assignees:
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+
+    put:
+      tags: ["3. Service Management"]
+      summary: "[Staff All] มอบหมาย/ถอด เจ้าหน้าที่ดูแลบริการ"
+      description: |
+        มอบหมาย STAFF เป็นผู้รับผิดชอบบริการ
+        ส่ง user_ids=[] เพื่อถอดมอบหมายทั้งหมด
+        HC_ADMIN/SUPER_ADMIN: กำหนดได้ทุกคนในศูนย์; STAFF: เฉพาะบริการในศูนย์ตัวเอง
+      operationId: staffSyncAssignees
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncAssigneesRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Service"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/services/{id}/time-slot-days:
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+
+    put:
+      tags: ["3. Service Management"]
+      summary: "[HC Admin / Super Admin] ตั้งค่าวันเปิดให้บริการ (Operating Days) รายช่วงเวลา"
+      description: กำหนดวันเปิดให้บริการรายสัปดาห์ (1=จันทร์ … 7=อาทิตย์) สำหรับแต่ละช่วงเวลาของบริการ (Full Replace)
+      operationId: staffSyncServiceTimeSlotDays
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncServiceTimeSlotDaysRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ตั้งค่าวันเปิดให้บริการสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/Service"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/staff/services/{id}/staff:
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+
+    put:
+      tags: ["3. Service Management"]
+      summary: "[HC Admin / Super Admin] ผูกหมอ/เจ้าหน้าที่ที่เลือกได้เข้ากับบริการ"
+      description: |
+        กำหนดรายชื่อหมอที่ผู้ป่วยเลือกได้ (Selectable Staff) สำหรับบริการที่เปิด allow_staff_selection
+        - ส่ง staff_ids = [] เพื่อถอดทั้งหมด
+        - แต่ละคนต้องเป็นบุคลากรของศูนย์เดียวกับบริการ และอยู่ในหมวดหมู่เดียวกับบริการ
+        - แกะหมอที่มีคิว CONFIRMED ในอนาคตค้างอยู่ไม่ได้ (422)
+        - ทุกการตั้งค่าถูกบันทึก Audit Log (SERVICE_SELECTABLE_STAFF_SYNC)
+      operationId: staffSyncServiceStaff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncServiceStaffRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ผูกเจ้าหน้าที่ที่เลือกได้เข้ากับบริการสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/Service"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ══════════════════════════════════════════════════════════
+  # 4. TIME SLOT MASTER
+  # ══════════════════════════════════════════════════════════
+
+  /v1/staff/admin/time-slots:
+    get:
+      tags: ["4. Time Slot Master"]
+      summary: "[HC Admin / Super Admin] รายการช่วงเวลาของศูนย์ (หรือทุกศูนย์สำหรับ Super Admin)"
+      description: |
+        เรียงตาม sort_order
+        - HC_ADMIN: เฉพาะศูนย์ของตนเอง
+        - SUPER_ADMIN: ทุกศูนย์ (หรือกรองด้วย ?health_center_id=)
+        - เฉพาะ SUPER_ADMIN / HEALTH_CENTER_ADMIN (STAFF เข้าไม่ได้ — 403)
+        - items = TimeSlotResource: id, health_center_id, label, start_time, end_time, sort_order, is_active
+      operationId: staffListTimeSlots
+      parameters:
+        - $ref: "#/components/parameters/HealthCenterIdFilter"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TimeSlotResource"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: ["4. Time Slot Master"]
+      summary: "[Super Admin] เพิ่มช่วงเวลาให้บริการใหม่"
+      description: เพิ่ม time slot ใหม่ให้ศูนย์สุขภาพ (ต้องระบุ health_center_id)
+      operationId: staffCreateTimeSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreTimeSlotRequest"
+      responses:
+        "201":
+          description: สร้างสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "เพิ่มช่วงเวลาสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/TimeSlotResource"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/admin/time-slots/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Time Slot ID
+
+    put:
+      tags: ["4. Time Slot Master"]
+      summary: "[Super Admin] แก้ไขช่วงเวลาให้บริการ"
+      operationId: staffUpdateTimeSlot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTimeSlotRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "แก้ไขช่วงเวลาสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/TimeSlotResource"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    delete:
+      tags: ["4. Time Slot Master"]
+      summary: "[Super Admin] ลบช่วงเวลาให้บริการ"
+      description: |
+        ลบ hard delete — ห้ามลบถ้ามีคิวอ้างอิงช่วงเวลานี้อยู่ทุกสถานะ/ทุกวัน
+        (รวมคิวที่ผ่านไปแล้ว) → 422; วิธีที่แนะนำคือปิดใช้งาน (toggle-status) แทน
+      operationId: staffDeleteTimeSlot
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ลบช่วงเวลาเรียบร้อยแล้ว"
+        "422":
+          description: "ไม่สามารถลบได้ เนื่องจากมีคิวที่ใช้ช่วงเวลานี้อยู่ (ทุกสถานะ รวมคิวที่ผ่านไปแล้ว)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/admin/time-slots/{id}/toggle-status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Time Slot ID
+
+    patch:
+      tags: ["4. Time Slot Master"]
+      summary: "[HC Admin / Super Admin] เปิด/ปิดใช้งานช่วงเวลา (is_active)"
+      description: ใช้ปิด slot แทนการลบ เมื่อมีคิวใช้ช่วงเวลาอยู่ (HC_ADMIN เฉพาะศูนย์ตัวเอง / SUPER_ADMIN ต้องตรงกับศูนย์ของ slot)
+      operationId: staffToggleTimeSlotStatus
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ปรับปรุงสถานะช่วงเวลาสำเร็จ"
+                      is_active:
+                        type: boolean
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ══════════════════════════════════════════════════════════
+  # 5. ROSTER & STAFF LEAVE
+  # ══════════════════════════════════════════════════════════
+
+  /v1/staff/roster:
+    get:
+      tags: ["5. Roster & Staff Leave"]
+      summary: "[Staff All] รายชื่อบุคลากรและสถานะปฏิบัติงาน"
+      description: ถ้าระบุ `?date=` จะเพิ่ม field `effective_status` ให้แต่ละคน
+      operationId: staffListRoster
+      parameters:
+        - $ref: "#/components/parameters/HealthCenterIdFilter"
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+          example: "2026-08-25"
+          description: วันที่ต้องการดูสถานะ
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/StaffMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: ["5. Roster & Staff Leave"]
+      summary: "[Staff All] เพิ่มบุคลากรใหม่เข้าตารางปฏิบัติงาน"
+      operationId: staffCreateRoster
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStaffMemberRequest"
+      responses:
+        "201":
+          description: สร้างสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/StaffMember"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/roster/{id}/toggle-duty:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+
+    patch:
+      tags: ["5. Roster & Staff Leave"]
+      summary: "[Staff All] สลับสถานะเวรปฏิบัติงาน (ACTIVE ↔ LEAVE)"
+      description: |
+        สลับสถานะเวรของบุคลากรในศูนย์
+        - ไม่สามารถสลับได้ถ้าสถานะเป็น INACTIVE (422)
+        - สลับเป็น LEAVE ไม่ได้ถ้ายังมีคิว CONFIRMED ของบุคลากรนี้ตั้งแต่วันนี้เป็นต้นไป (422)
+      operationId: staffToggleDuty
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                      status:
+                        type: string
+                        enum: [ACTIVE, LEAVE]
+        "422":
+          description: "ไม่สามารถสลับได้ — สถานะ INACTIVE หรือมีคิว CONFIRMED อยู่ในอนาคต (ตั้งแต่วันนี้ขึ้นไป)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/leaves:
+    get:
+      tags: ["5. Roster & Staff Leave"]
+      summary: "[Staff All] รายการวันลาของเจ้าหน้าที่"
+      operationId: staffListLeaves
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: กรองตามวันที่
+        - name: staff_user_id
+          in: query
+          schema:
+            type: integer
+          description: กรองตามเจ้าหน้าที่
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/StaffLeaveResource"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: ["5. Roster & Staff Leave"]
+      summary: "[Staff / HC Admin / Super Admin] บันทึกวันลา (Auto-approved / Idempotent)"
+      description: |
+        HC_ADMIN ลงให้ลูกน้องในศูนย์; STAFF ลงให้ตนเองเท่านั้น; SUPER_ADMIN ลงให้ใครก็ได้ (ระบุ health_center_id)
+        ลงซ้ำวันเดิม → idempotent (200 ถ้ามีอยู่แล้ว, 201 ถ้าเพิ่งสร้าง)
+        Guard (422): ถ้ามีคิว CONFIRMED ของคนนั้นในวันลานั้น ต้องจัดการคิวก่อน
+      operationId: staffCreateLeave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreLeaveRequest"
+      responses:
+        "201":
+          description: ลงวันลาสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ลงวันลาสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/StaffLeaveResource"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/leaves/availability:
+    get:
+      tags: ["5. Roster & Staff Leave"]
+      summary: "[Staff All] ตรวจสอบความพร้อมปฏิบัติงาน ณ วันที่ระบุ"
+      description: |
+        เช็คความพร้อมก่อนเปิด Walk-in / จอง — available: true/false
+        - allow_staff_selection=true → true เมื่อหมอที่เลือกได้ (service_staff, ACTIVE, ไม่ลา) ≥ 1
+        - allow_staff_selection=false → true เมื่อ staff มอบหมาย (service_user) ≥ 1 คนไม่ลาวันนั้น
+      operationId: staffCheckAvailability
+      parameters:
+        - name: service_id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: ID บริการ
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: วันที่ต้องการตรวจ
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      available:
+                        type: boolean
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/leaves/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+
+    delete:
+      tags: ["5. Roster & Staff Leave"]
+      summary: "[Staff / HC Admin / Super Admin] ยกเลิกวันลา"
+      description: |
+        STAFF: เฉพาะวันลาของตัวเอง; HC_ADMIN: ของศูนย์ตัวเอง;
+        SUPER_ADMIN: ของใครก็ได้ (ระบุ health_center_id)
+      operationId: staffDeleteLeave
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ยกเลิกวันลาสำเร็จ"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ══════════════════════════════════════════════════════════
+  # 6. APPOINTMENT & QUEUE
+  # ══════════════════════════════════════════════════════════
+
+  /v1/patient/available-slots:
+    get:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Public] ตรวจสอบช่วงเวลา/สล็อตที่ยังว่างอยู่"
+      description: |
+        หากศูนย์อยู่ในสถานะ CLOSING / INACTIVE จะคืนค่า slots เป็นอาร์เรย์ว่าง (200)
+        - บริการเปิดเลือกหมอ (allow_staff_selection=true) → แต่ละ slot คืน staff[] เฉพาะหมอที่ว่างในรอบนั้น
+        - ถ้าไม่เปิด → slot ว่าง = ยังมีโควตาเหลือ (หมอไม่ลาทั้งหมด)
+      operationId: patientAvailableSlots
+      parameters:
+        - name: service_id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: ID ของบริการ (ต้อง active)
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: วันที่ต้องการจอง (ต้อง >= วันนี้)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      service_name:
+                        type: string
+                      capacity_type:
+                        type: string
+                        enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
+                      date:
+                        type: string
+                        format: date
+                      slots:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AvailableSlot"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+      security: []
+
+  /v1/patient/services/{id}/staff:
+    get:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Patient] รายชื่อหมอ/เจ้าหน้าที่ที่เลือกได้สำหรับบริการ"
+      description: |
+        ใช้สำหรับบริการที่เปิดให้เลือกหมอ (allow_staff_selection=true) ก่อนจองคิว
+        - เห็นเฉพาะหมอที่ผูกกับบริการ (service_staff) + สถานะ ACTIVE + ไม่ลาวันที่ระบุ
+        - ถ้าบริการไม่ได้เปิดให้เลือกหมอ → คืน staff เป็น []
+      operationId: patientGetServiceStaff
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Service ID
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: วันที่ต้องการตรวจ (default = วันนี้)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      date:
+                        type: string
+                        format: date
+                        description: วันที่ (คืนค่าเฉพาะเมื่อบริการเปิดให้เลือกหมอ allow_staff_selection=true)
+                      staff:
+                        type: array
+                        description: รายชื่อหมอที่เลือกได้ (ถ้าไม่เปิดให้เลือกหมอ → คืน [] และไม่มี key date)
+                        items:
+                          $ref: "#/components/schemas/SelectableStaff"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/patient/book:
+    post:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Patient] จองคิวนัดหมายออนไลน์"
+      description: |
+        เงื่อนไขปฏิเสธ (422): ศูนย์ปิดรับจอง (CLOSING / INACTIVE), ศูนย์เต็ม, บริการปิดใช้งาน,
+        จองซ้ำวันเดียวกัน, ไม่อยู่ใน Operating Days, หมอลาทั้งหมด ฯลฯ
+        - บริการที่เปิดเลือกหมอ (allow_staff_selection=true): ต้องส่ง staff_id ที่ผูกกับบริการ + ACTIVE + ไม่ลา → 422 ถ้าไม่ผ่าน
+      operationId: patientBook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookAppointmentRequest"
+      responses:
+        "201":
+          description: จองสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "จองคิวสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/BookingResult"
+        "422":
+          description: จองไม่สำเร็จ (คิวเต็ม / ปิดรับจอง / ซ้ำวันเดียวกัน)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/appointments/walk-in:
+    post:
+      tags: ["6. Appointment & Queue"]
+      summary: "[STAFF] ออกคิว Walk-in ณ จุดบริการ (สร้างแทนผู้ป่วย)"
+      description: |
+        เงื่อนไขปฏิเสธ (422): ศูนย์ปิดรับจอง, ไม่ได้ Operating Days, หมอลาทั้งหมด/หมอที่ส่งลา, ศูนย์เต็ม ฯลฯ
+        - บริการที่เปิดเลือกหมอ: ต้องส่ง staff_id (ผูก, ACTIVE, ไม่ลา, ยังไม่เต็ม) → 422 ถ้าไม่ผ่าน
+        - booked_by_type = STAFF เสมอ
+      operationId: staffWalkInBooking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalkInBookingRequest"
+      responses:
+        "201":
+          description: สร้างสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ออกคิว Walk-in สำเร็จ"
+                      appointment:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          queue_no:
+                            type: string
+                            example: "Q-001"
+                          patient_name:
+                            type: string
+                            example: "สมชาย ใจดี"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/patient/appointments:
+    get:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Patient] ประวัตินัดหมายของผู้ป่วยปัจจุบัน"
+      operationId: patientListAppointments
+      parameters:
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Appointment"
+                      meta:
+                        $ref: "#/components/schemas/PaginationMeta"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/patient/appointments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AppointmentId"
+
+    get:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Patient] ดูรายละเอียดบัตรคิว 1 รายการ"
+      operationId: patientShowAppointment
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      ticket:
+                        $ref: "#/components/schemas/Appointment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/patient/appointments/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/AppointmentId"
+
+    patch:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Patient] ยกเลิกนัดหมาย (เฉพาะสถานะ CONFIRMED)"
+      description: |
+        ยกเลิกได้เฉพาะ CONFIRMED และยังยกเลิกทัน:
+        - นัดวันหลัง → ทั้งวัน; นัดวันนี้ → เฉพาะก่อนช่วงเวลาสิ้นสุด (end_time); เลยแล้ว/ไม่ใช่ของเรา → 404
+        เหตุผลเริ่มต้น (ถ้าไม่ระบุ): "ผู้ป่วยขอยกเลิกเองผ่านระบบ"
+      operationId: patientCancelAppointment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: เหตุผลการยกเลิก
+      responses:
+        "200":
+          description: ยกเลิกสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ยกเลิกการจองคิวเรียบร้อยแล้ว"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/dashboard/summary:
+    get:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Staff All] สรุปยอดคิวภาพรวมประจำวัน"
+      description: จำนวนคิว waiting, completed, cancelled, no_show
+      operationId: staffDashboardSummary
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+            example: "2026-08-21"
+        - $ref: "#/components/parameters/HealthCenterIdFilter"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      date:
+                        type: string
+                        format: date
+                      summary:
+                        $ref: "#/components/schemas/DashboardSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/appointments:
+    get:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Staff All] รายการนัดหมาย/คิวประจำวัน"
+      description: |
+        คิวของศูนย์ในวันนั้น เรียง appointment_number ASC
+        - STAFF: เห็นเฉพาะคิวของบริการที่ตัวเองถูกมอบหมาย (assignees) — บริการนอกเหนือ → 403
+        - HC_ADMIN/SUPER_ADMIN: ทุกคิวของศูนย์ (SA ระบุ ?health_center_id)
+        - กรองด้วย date / service_id / status
+      operationId: staffListAppointments
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: service_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [CONFIRMED, COMPLETED, CANCELLED, NO_SHOW]
+        - $ref: "#/components/parameters/HealthCenterIdFilter"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      date:
+                        type: string
+                        format: date
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Appointment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/appointments/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/AppointmentId"
+
+    patch:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Staff All] เปลี่ยนสถานะคิวนัดหมาย"
+      description: State machine (CONFIRMED → COMPLETED / CANCELLED / NO_SHOW)
+      operationId: staffUpdateAppointmentStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStatusRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                      data:
+                        $ref: "#/components/schemas/Appointment"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/appointments/{id}/reassign-staff:
+    parameters:
+      - $ref: "#/components/parameters/AppointmentId"
+
+    patch:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Staff All] ย้ายคิวไปหมอ/เจ้าหน้าที่คนอื่น"
+      description: |
+        ใช้กรณีหมอคนเดิมติดภารกิจกะทันหัน — เฉพาะบริการที่เปิดให้เลือกหมอ
+        - คิวต้องยังเป็นสถานะ CONFIRMED
+        - หมอคนใหม่ต้องผูกกับบริการ (service_staff), ว่างวันนั้น (ไม่ลา) และยังไม่เต็มคิวในรอบเวลานั้น (โควตา 1 คิว/รอบ/คน)
+        - ย้ายเป็นหมอคนเดิมซ้ำไม่ได้ (422)
+        - ทุกการย้ายถูกบันทึก Audit Log (APPOINTMENT_STAFF_REASSIGN)
+      operationId: staffReassignStaff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReassignStaffRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ย้ายคิวไปเจ้าหน้าที่คนใหม่สำเร็จ"
+                      data:
+                        type: object
+                        properties:
+                          staff:
+                            type: object
+                            nullable: true
+                            properties:
+                              id:
+                                type: integer
+                              name:
+                                type: string
+                              position:
+                                type: string
+                                nullable: true
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ══════════════════════════════════════════════════════════
+  # 7. PATIENT DATA & PDPA PRIVACY
+  # ══════════════════════════════════════════════════════════
+
+  /v1/patient/right-types:
+    get:
+      tags: ["7. Patient Data & PDPA Privacy"]
+      summary: "[Public] สิทธิการรักษาทั้งหมด (Dropdown)"
+      operationId: patientGetRightTypes
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RightType"
+      security: []
+
+  /v1/staff/admin/patients:
+    get:
+      tags: ["7. Patient Data & PDPA Privacy"]
+      summary: "[HC Admin / Super Admin] ค้นหาและดูรายชื่อผู้รับบริการ"
+      operationId: adminListPatients
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: ค้นหาตามชื่อ/นามสกุล
+        - name: cid
+          in: query
+          schema:
+            type: string
+          description: เลขบัตรประชาชน 13 หลัก
+        - name: phone
+          in: query
+          schema:
+            type: string
+          description: ค้นหาเบอร์โทรบางส่วน
+        - name: health_center_id
+          in: query
+          schema:
+            type: integer
+        - name: gender
+          in: query
+          schema:
+            type: string
+            enum: [MALE, FEMALE, OTHER]
+        - name: province
+          in: query
+          schema:
+            type: string
+        - name: district
+          in: query
+          schema:
+            type: string
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 15
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, first_name, last_name, id]
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaginatedPatients"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/staff/patients/{id}/contact:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Patient ID
+
+    patch:
+      tags: ["7. Patient Data & PDPA Privacy"]
+      summary: "[Staff All] แก้ไขเบอร์โทรศัพท์ผู้รับบริการ"
+      description: บันทึก audit_logs (UPDATE_PATIENT_CONTACT) ทุกครั้ง
+      operationId: staffUpdatePatientContact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePatientContactRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "แก้ไขเบอร์โทรศัพท์ผู้รับบริการสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/PatientContactUpdate"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/patients/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Patient ID
+
+    patch:
+      tags: ["7. Patient Data & PDPA Privacy"]
+      summary: "[HC Admin / Super Admin] แก้ไขข้อมูลผู้รับบริการแบบเต็มรูปแบบ"
+      description: แก้ไข Name, DOB, Gender, CID, Address (STAFF ได้ 403)
+      operationId: staffUpdatePatientProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePatientProfileRequest"
+      responses:
+        "200":
+          description: OK — คืนข้อมูลผู้ป่วยแบบ unmask
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "แก้ไขข้อมูลผู้รับบริการสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/StaffPatientProfile"
+        "403":
+          description: STAFF ไม่มีสิทธิ์
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/appointments/{id}/unmask:
+    parameters:
+      - $ref: "#/components/parameters/AppointmentId"
+
+    post:
+      tags: ["7. Patient Data & PDPA Privacy"]
+      summary: "[Staff All] เปิดเผยข้อมูลผู้ป่วยจริง (PDPA Audit Trigger)"
+      description: เปิดเผย CID, ชื่อ, เบอร์โทร จริงของผู้ป่วย และบันทึก Audit Log เสมอ — Throttle 10 req/min (throttle:unmask)
+      operationId: staffUnmaskPatient
+      responses:
+        "200":
+          description: OK — ข้อมูลผู้ป่วย unmask
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      patient:
+                        $ref: "#/components/schemas/UnmaskedPatient"
+        "403":
+          description: ไม่มีสิทธิ์ (นัดหมายไม่ใช่ของ รพ.สต. นี้)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ══════════════════════════════════════════════════════════
+  # 8. SYSTEM INTEGRATIONS
+  # ══════════════════════════════════════════════════════════
+
+  /v1/staff/discord/webhook:
+    patch:
+      tags: ["8. System Integrations"]
+      summary: "[Super Admin] ตั้งค่า/ลบ Discord Webhook ของ รพ.สต."
+      description: ส่ง URL เพื่อตั้งค่า หรือส่ง null เพื่อลบ
+      operationId: staffUpdateDiscordWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDiscordWebhookRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ตั้งค่า Discord Webhook สำเร็จ"
+                      data:
+                        type: object
+                        properties:
+                          health_center:
+                            type: string
+                            example: "รพ.สต. บ้านดงแสน"
+                          webhook_url_set:
+                            type: boolean
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+# ==================== COMPONENTS ====================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Sanctum Token
+
+  parameters:
+    ServiceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Service ID
+    AppointmentId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Appointment ID
+    HealthCenterIdFilter:
+      name: health_center_id
+      in: query
+      required: false
+      schema:
+        type: integer
+      description: กรองตาม รพ.สต. (SUPER_ADMIN เท่านั้น — role อื่นถูกจำกัดที่ รพ.สต. ของตัวเองโดยอัตโนมัติ)
+
+  responses:
+    Unauthorized:
+      description: ไม่ได้ยืนยันตัวตน (Unauthenticated)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            message: "Unauthorized"
+    ValidationError:
+      description: ข้อมูลไม่ถูกต้อง
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            message: "The given data was invalid."
+            errors:
+              username:
+                - "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง"
+    Forbidden:
+      description: ไม่มีสิทธิ์เข้าถึง (Forbidden)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            message: "Forbidden"
+    NotFound:
+      description: ไม่พบข้อมูลที่ร้องขอ (Not Found)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            message: "Not Found"
+
+  schemas:
+    # ---- Generic ----
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+
+    PaginationMeta:
+      type: object
+      description: meta แบบย่อของ /v1/patient/appointments (มีแค่ 4 keys นี้)
+      properties:
+        current_page:
+          type: integer
+        last_page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+
+    LaravelPaginator:
+      type: object
+      description: "รูปแบบ paginator มาตรฐานของ Laravel (ใช้ใน admin endpoints: users/patients/health-centers)"
+      properties:
+        current_page:
+          type: integer
+        data:
+          type: array
+          items:
+            type: object
+        first_page_url:
+          type: string
+          nullable: true
+        from:
+          type: integer
+          nullable: true
+        last_page:
+          type: integer
+        last_page_url:
+          type: string
+          nullable: true
+        links:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaginatorLink"
+        next_page_url:
+          type: string
+          nullable: true
+        path:
+          type: string
+        per_page:
+          type: integer
+        prev_page_url:
+          type: string
+          nullable: true
+        to:
+          type: integer
+          nullable: true
+        total:
+          type: integer
+
+    PaginatorLink:
+      type: object
+      properties:
+        url:
+          type: string
+          nullable: true
+        label:
+          type: string
+        active:
+          type: boolean
+
+    PaginatedUsers:
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/LaravelPaginator"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/UserResource"
+
+    PaginatedPatients:
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/LaravelPaginator"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/StaffPatientResource"
+
+    PaginatedHealthCenters:
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/LaravelPaginator"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/StaffHealthCenterResource"
+
+    StaffPatientResource:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+          nullable: true
+        cid:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        phone_number:
+          type: string
+        birth_date:
+          type: string
+        gender:
+          type: string
+        subdistrict:
+          type: string
+          nullable: true
+        district:
+          type: string
+          nullable: true
+        province:
+          type: string
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+
+    StaffHealthCenterResource:
+      type: object
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+        name:
+          type: string
+        phone_number:
+          type: string
+          nullable: true
+        subdistrict:
+          type: string
+          nullable: true
+        district:
+          type: string
+          nullable: true
+        province:
+          type: string
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+        latitude:
+          type: number
+          nullable: true
+        longitude:
+          type: number
+          nullable: true
+        status:
+          type: string
+        has_webhook:
+          type: boolean
+
+    # ---- Staff ----
+    StaffUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        username:
+          type: string
+        role:
+          type: string
+          enum: [STAFF, HEALTH_CENTER_ADMIN, SUPER_ADMIN]
+        health_center:
+          type: object
+          nullable: true
+          description: รพ.สต. ต้นสังกัด (null = SUPER_ADMIN ที่ไม่มีศูนย์ประจำ)
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            code:
+              type: string
+
+    StaffResource:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        username:
+          type: string
+        health_center:
+          allOf:
+            - $ref: "#/components/schemas/HealthCenter"
+            - type: object
+              nullable: true
+          description: รพ.สต. ต้นสังกัด (null = SUPER_ADMIN)
+        roles:
+          type: array
+          items:
+            type: string
+
+    StaffMember:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        position:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, LEAVE]
+        effective_status:
+          type: string
+          nullable: true
+          enum: [ACTIVE, LEAVE]
+          description: สถานะจริง ณ วันที่ระบุ (เมื่อส่ง query param ?date=) — ACTIVE โดน leave ทับ → LEAVE
+        category:
+          $ref: "#/components/schemas/Category"
+        health_center:
+          $ref: "#/components/schemas/HealthCenter"
+        user:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: integer
+            username:
+              type: string
+
+    DashboardSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+        waiting:
+          type: integer
+        completed:
+          type: integer
+        cancelled:
+          type: integer
+        no_show:
+          type: integer
+
+    # ---- Patient ----
+    PatientProfile:
+      type: object
+      properties:
+        id:
+          type: integer
+        masked_cid:
+          type: string
+          example: "1-****-*****-23"
+          description: เลขบัตรที่ซ่อน (รูปแบบ 1-****-*****-xx)
+        masked_name:
+          type: string
+          example: "สม*** ใจ***"
+          description: ชื่อที่ซ่อน (อักขระ 2 ตัวแรก + *** ของชื่อและนามสกุล)
+        masked_phone:
+          type: string
+          example: "081-***-5678"
+          description: เบอร์โทรที่ซ่อน (รูปแบบ xxx-***-xxxx)
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+          nullable: true
+        rights:
+          type: array
+          items:
+            $ref: "#/components/schemas/PatientRight"
+
+    PatientRight:
+      type: object
+      properties:
+        id:
+          type: integer
+        right_type:
+          $ref: "#/components/schemas/RightType"
+        main_hospital_name:
+          type: string
+          nullable: true
+        is_primary:
+          type: boolean
+        card_number:
+          type: string
+          nullable: true
+        expire_date:
+          type: string
+          format: date
+          nullable: true
+
+    RightType:
+      type: object
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+          example: "SSS"
+        name:
+          type: string
+          example: "ประกันสังคม"
+        description:
+          type: string
+          nullable: true
+
+    UnmaskedPatient:
+      type: object
+      description: ข้อมูลจริงของผู้ป่วย (endpoint มี audit log — UNMASK_PATIENT_DATA)
+      properties:
+        id:
+          type: integer
+        cid:
+          type: string
+          example: "1234567890123"
+        full_name:
+          type: string
+          description: ชื่อ-นามสกุลเต็ม (first_name last_name)
+          example: "สมชาย ใจดี"
+        phone_number:
+          type: string
+          example: "0812345678"
+        birth_date:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+        address:
+          type: string
+          description: ที่อยู่เต็ม (full_address)
+        rights:
+          type: array
+          description: สิทธิการรักษาของผู้ป่วย (โหลด right_type ด้วย)
+          items:
+            $ref: "#/components/schemas/PatientRight"
+
+    PatientContactUpdate:
+      type: object
+      properties:
+        id:
+          type: integer
+        full_name:
+          type: string
+          example: "สมชาย ใจดี"
+        phone_number:
+          type: string
+          example: "0899999999"
+
+    PatientLoginSuccess:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        is_registered:
+          type: boolean
+          example: true
+        token:
+          type: string
+          nullable: false
+        patient:
+          type: object
+          properties:
+            id:
+              type: integer
+            masked_name:
+              type: string
+            masked_phone:
+              type: string
+
+    PatientLoginNotRegistered:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        is_registered:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "ไม่พบประวัติผู้รับบริการ กรุณาลงทะเบียนใหม่"
+        token:
+          type: string
+          nullable: true
+        patient:
+          type: object
+          nullable: true
+
+    # ---- Services ----
+    Service:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          example: "ตรวจสุขภาพทั่วไป"
+        description:
+          type: string
+          nullable: true
+        capacity_type:
+          type: string
+          enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
+        is_active:
+          type: boolean
+        allow_staff_selection:
+          type: boolean
+          description: เปิด/ปิดให้ผู้ป่วยเลือกหมอ/เจ้าหน้าที่ (เปิดได้เฉพาะ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว)
+        category:
+          $ref: "#/components/schemas/Category"
+        capacity:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: integer
+            max_per_slot:
+              type: integer
+              nullable: true
+            max_per_day:
+              type: integer
+              nullable: true
+        time_slots:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServiceTimeSlotHours"
+        assigned_staff:
+          type: array
+          items:
+            $ref: "#/components/schemas/StaffSummary"
+        selectable_staff:
+          type: array
+          description: หมอ/เจ้าหน้าที่ที่ผู้ป่วยเลือกได้ (service_staff) — มีเฉพาะเมื่อโหลดมาใน response
+          items:
+            $ref: "#/components/schemas/SelectableStaffWithStatus"
+
+    SelectableStaff:
+      type: object
+      description: หมอ/เจ้าหน้าที่ที่เลือกได้ (จาก GET /v1/patient/services/{id}/staff)
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        position:
+          type: string
+          nullable: true
+
+    SelectableStaffWithStatus:
+      type: object
+      description: หมอ/เจ้าหน้าที่ที่เลือกได้ พร้อมสถานะ (ใน ServiceResource.selectable_staff)
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        position:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, LEAVE]
+
+    StaffSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        username:
+          type: string
+
+    Category:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          example: "แพทย์แผนไทย"
+        icon:
+          type: string
+          nullable: true
+        sort_order:
+          type: integer
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+
+    TimeSlot:
+      type: object
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+          example: "08:30 - 09:30 น."
+        start_time:
+          type: string
+          example: "08:30:00"
+        end_time:
+          type: string
+          example: "09:30:00"
+        sort_order:
+          type: integer
+        is_active:
+          type: boolean
+
+    ServiceTimeSlotHours:
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/TimeSlot"
+        - type: object
+          properties:
+            days:
+              type: array
+              description: "วันเปิดให้บริการ (ISO 8601: 1=จันทร์ ... 7=อาทิตย์)"
+              items:
+                type: integer
+                minimum: 1
+                maximum: 7
+              example: [1, 3, 5]
+
+    AvailableSlot:
+      type: object
+      properties:
+        time_slot_id:
+          type: integer
+        time_label:
+          type: string
+          example: "08:00-09:00"
+        start_time:
+          type: string
+        end_time:
+          type: string
+        max_capacity:
+          type: integer
+        available_count:
+          type: integer
+        is_full:
+          type: boolean
+        staff:
+          type: array
+          nullable: true
+          description: รายละเอียดรายหมอต่อรอบเวลา (มีเฉพาะเมื่อบริการ allow_staff_selection=true) — แต่ละหมอรองรับ 1 คิวต่อรอบ
+          items:
+            type: object
+            properties:
+              staff_id:
+                type: integer
+              name:
+                type: string
+              position:
+                type: string
+                nullable: true
+              available:
+                type: boolean
+                description: หมอคนนี้ยังว่างในรอบเวลานี้หรือไม่
+
+    # ---- Appointment ----
+    Appointment:
+      type: object
+      properties:
+        id:
+          type: integer
+        queue_no:
+          type: string
+          description: หมายเลขคิว (รูปแบบ Q-xxx เช่น Q-007)
+          example: "Q-007"
+        appointment_number:
+          type: integer
+        status:
+          type: string
+          enum: [CONFIRMED, COMPLETED, CANCELLED, NO_SHOW]
+        booked_by_type:
+          type: string
+          enum: [SELF, STAFF]
+          description: วิธีการจอง (SELF = ผู้ป่วยจองเอง / STAFF = เจ้าหน้าที่ออกคิว walk-in ให้)
+        appointment_date:
+          type: string
+          format: date
+        cancellation_reason:
+          type: string
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        health_center:
+          $ref: "#/components/schemas/HealthCenter"
+        service:
+          $ref: "#/components/schemas/Service"
+        time_slot:
+          $ref: "#/components/schemas/TimeSlot"
+        staff:
+          type: object
+          nullable: true
+          description: หมอ/เจ้าหน้าที่ที่รับผิดชอบคิวนี้ (null = ระบบจัดสรรอัตโนมัติ)
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            position:
+              type: string
+              nullable: true
+        patient:
+          type: object
+          properties:
+            id:
+              type: integer
+            masked_name:
+              type: string
+            masked_phone:
+              type: string
+        patient_right:
+          $ref: "#/components/schemas/PatientRight"
+
+    BookingResult:
+      type: object
+      properties:
+        appointment_id:
+          type: integer
+        queue_no:
+          type: string
+          example: "Q-001"
+        health_center:
+          type: string
+          example: "รพ.สต. บ้านดงแสน"
+        service_name:
+          type: string
+          example: "ตรวจสุขภาพทั่วไป"
+        appointment_date:
+          type: string
+          format: date
+        time_slot:
+          type: string
+          example: "08:00-09:00"
+        staff:
+          type: object
+          nullable: true
+          description: หมอ/เจ้าหน้าที่ที่เลือก (null = ระบบจัดสรรอัตโนมัติ)
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            position:
+              type: string
+              nullable: true
+
+    # ---- Health Center ----
+    HealthCenter:
+      type: object
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+          example: "51010"
+        name:
+          type: string
+          example: "รพ.สต. บ้านดงแสน"
+        phone_number:
+          type: string
+          nullable: true
+        subdistrict:
+          type: string
+          nullable: true
+        district:
+          type: string
+          nullable: true
+        province:
+          type: string
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+        latitude:
+          type: number
+          format: double
+          nullable: true
+        longitude:
+          type: number
+          format: double
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, CLOSING, INACTIVE]
+          description: สถานะศูนย์ (ACTIVE เปิดรับจอง / CLOSING กำลังปิด / INACTIVE ปิดสมบูรณ์)
+
+    HealthCenterDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+        name:
+          type: string
+        phone_number:
+          type: string
+          nullable: true
+        subdistrict:
+          type: string
+          nullable: true
+        district:
+          type: string
+          nullable: true
+        province:
+          type: string
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+        latitude:
+          type: number
+          format: double
+          nullable: true
+        longitude:
+          type: number
+          format: double
+          nullable: true
+
+    StaffHealthCenterDropdown:
+      type: object
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+        name:
+          type: string
+        has_webhook:
+          type: boolean
+        status:
+          type: string
+          enum: [ACTIVE, CLOSING]
+
+    UpdateHealthCenterRequest:
+      type: object
+      properties:
+        health_center_id:
+          type: integer
+        code:
+          type: string
+          minLength: 1
+          maxLength: 20
+        name:
+          type: string
+          maxLength: 255
+        phone_number:
+          type: string
+          minLength: 1
+          maxLength: 20
+          nullable: true
+        subdistrict:
+          type: string
+          maxLength: 100
+          nullable: true
+        district:
+          type: string
+          maxLength: 100
+          nullable: true
+        province:
+          type: string
+          maxLength: 100
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          nullable: true
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          nullable: true
+      example:
+        name: "รพ.สต.ท่าพระ"
+        phone_number: "024111111"
+        province: "กรุงเทพมหานคร"
+        latitude: 13.7346
+        longitude: 100.4871
+
+    HealthCenterStatusToggle:
+      type: object
+      description: ผลการสลับสถานะศูนย์
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [ACTIVE, CLOSING, INACTIVE]
+          description: สถานะใหม่ของศูนย์หลังสลับ
+
+    NearbyCenter:
+      allOf:
+        - $ref: "#/components/schemas/HealthCenter"
+        - type: object
+          properties:
+            distance_km:
+              type: number
+              format: double
+            services:
+              type: array
+              items:
+                $ref: "#/components/schemas/Service"
+
+    # ---- Requests ----
+    CreateServiceRequest:
+      type: object
+      required: [category_id, name, capacity_type, time_slots]
+      properties:
+        health_center_id:
+          type: integer
+        category_id:
+          type: integer
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        capacity_type:
+          type: string
+          enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
+        allow_staff_selection:
+          type: boolean
+          enum: [false]
+          default: false
+          description: |
+            ไม่สามารถเปิดให้เลือกหมอตอนสร้างบริการได้ (value ต้องเป็น false/0)
+            - สร้างบริการก่อน → ผูกหมอที่เลือกได้ (PUT /v1/staff/services/{id}/staff) → เปิด allow_staff_selection ผ่านการแก้ไขบริการ
+        max_per_slot:
+          type: integer
+          minimum: 1
+        max_per_day:
+          type: integer
+          minimum: 1
+        time_slots:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
+
+    UpdateServiceRequest:
+      type: object
+      properties:
+        health_center_id:
+          type: integer
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        category_id:
+          type: integer
+        capacity_type:
+          type: string
+          enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
+        allow_staff_selection:
+          type: boolean
+          description: |
+            เปิด/ปิดให้ผู้ป่วยเลือกหมอ — เปิดได้เฉพาะ services ที่ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว (service_staff);
+            การปิดต้องไม่มีคิว CONFIRMED ในอนาคตที่ผูกกับหมอไว้ (422)
+        max_per_slot:
+          type: integer
+          minimum: 1
+        max_per_day:
+          type: integer
+          minimum: 1
+        time_slots:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
+
+    ServiceTimeSlotDayInput:
+      type: object
+      required: [time_slot_id, days]
+      properties:
+        time_slot_id:
+          type: integer
+        days:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+          example: [1, 2, 3, 4, 5]
+
+    PatientServiceBrief:
+      type: object
+      description: บริการแบบย่อสำหรับหน้าจองผู้ป่วย (patient center services) — capacity แบบครอบคลุม + time_slots จาก Service::slotsWithDays()
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        capacity_type:
+          type: string
+          enum: [PER_SLOT, PER_DAY]
+        category:
+          $ref: "#/components/schemas/Category"
+        capacity:
+          type: object
+          description: "โหลด capacity ทั้งตามจริง (per_slot / per_day จากตาราง capacities)"
+          properties:
+            id:
+              type: integer
+            max_per_slot:
+              type: integer
+            max_per_day:
+              type: integer
+        time_slots:
+          type: array
+          description: ช่วงเวลา + วันให้บริการ (จาก Service::slotsWithDays)
+          items:
+            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
+
+    SyncServiceTimeSlotDaysRequest:
+      type: object
+      required: [time_slots]
+      properties:
+        health_center_id:
+          type: integer
+        time_slots:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
+
+    StaffLeaveResource:
+      type: object
+      properties:
+        id:
+          type: integer
+        leave_date:
+          type: string
+          format: date
+        reason:
+          type: string
+          nullable: true
+        staff_user_id:
+          type: integer
+          description: ID ของผู้ใช้ (STAFF) ที่ลางาน
+        health_center_id:
+          type: integer
+          description: รพ.สต. ต้นสังกัดของวันลา
+        created_by:
+          type: integer
+          nullable: true
+          description: ID ของผู้ใช้ที่สร้างบันทึกวันลา
+        staff_user:
+          type: object
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            username:
+              type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    StoreLeaveRequest:
+      type: object
+      required: [staff_user_id, leave_date]
+      properties:
+        health_center_id:
+          type: integer
+        staff_user_id:
+          type: integer
+        leave_date:
+          type: string
+          format: date
+        reason:
+          type: string
+          maxLength: 500
+
+    SyncAssigneesRequest:
+      type: object
+      required: [user_ids]
+      properties:
+        health_center_id:
+          type: integer
+        user_ids:
+          type: array
+          items:
+            type: integer
+
+    SyncServiceStaffRequest:
+      type: object
+      required: [staff_ids]
+      properties:
+        health_center_id:
+          type: integer
+        staff_ids:
+          type: array
+          description: |
+            รายการ staff_id ของหมอ/เจ้าหน้าที่ที่ผู้ป่วยเลือกได้ ([] = ถอดทั้งหมด)
+            - ต้องเป็นบุคลากรของศูนย์เดียวกับบริการ และหมวดหมู่เดียวกับบริการ (มิฉะนั้น 422)
+            - แกะหมอที่มีคิว CONFIRMED ในอนาคตค้างอยู่ไม่ได้ (422)
+          items:
+            type: integer
+
+    ReassignStaffRequest:
+      type: object
+      required: [staff_id]
+      properties:
+        health_center_id:
+          type: integer
+        staff_id:
+          type: integer
+          description: ID หมอ/เจ้าหน้าที่คนใหม่ (ต้องผูกกับ service_staff ของบริการในคิวนี้)
+
+    WalkInBookingRequest:
+      type: object
+      required: [cid, first_name, last_name, phone_number, birth_date, service_id, time_slot_id]
+      properties:
+        health_center_id:
+          type: integer
+        cid:
+          type: string
+          minLength: 13
+          maxLength: 13
+          example: "1234567890123"
+        first_name:
+          type: string
+          maxLength: 100
+        last_name:
+          type: string
+          maxLength: 100
+        phone_number:
+          type: string
+          pattern: "^[0-9]{10}$"
+          example: "0812345678"
+        birth_date:
+          type: string
+          format: date
+          example: "1990-01-15"
+        service_id:
+          type: integer
+        time_slot_id:
+          type: integer
+        staff_id:
+          type: integer
+          nullable: true
+          description: ID หมอ/เจ้าหน้าที่ที่ออกคิวให้ (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
+        patient_right_id:
+          type: integer
+          nullable: true
+
+    UpdateStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        health_center_id:
+          type: integer
+        status:
+          type: string
+          enum: [COMPLETED, CANCELLED, NO_SHOW]
+        cancellation_reason:
+          type: string
+          maxLength: 500
+
+    BookAppointmentRequest:
+      type: object
+      required: [service_id, time_slot_id, appointment_date]
+      properties:
+        service_id:
+          type: integer
+        time_slot_id:
+          type: integer
+        appointment_date:
+          type: string
+          format: date
+        staff_id:
+          type: integer
+          nullable: true
+          description: ID หมอ/เจ้าหน้าที่ที่เลือก (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
+        patient_right_id:
+          type: integer
+          nullable: true
+
+    CreateStaffMemberRequest:
+      type: object
+      required: [name, status]
+      properties:
+        health_center_id:
+          type: integer
+        category_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          maxLength: 255
+        position:
+          type: string
+          maxLength: 100
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, LEAVE]
+
+    UpdateDiscordWebhookRequest:
+      type: object
+      properties:
+        health_center_id:
+          type: integer
+        webhook_url:
+          type: string
+          nullable: true
+          maxLength: 500
+          pattern: "^https://discord\\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$"
+          example: "https://discord.com/api/webhooks/1234567890/abcdefg..."
+
+    TimeSlotResource:
+      type: object
+      properties:
+        id:
+          type: integer
+        health_center_id:
+          type: integer
+          nullable: true
+        label:
+          type: string
+          example: "08:30 - 09:30 น."
+        start_time:
+          type: string
+          example: "08:30:00"
+        end_time:
+          type: string
+          example: "09:30:00"
+        sort_order:
+          type: integer
+        is_active:
+          type: boolean
+
+    StoreTimeSlotRequest:
+      type: object
+      required: [start_time, end_time]
+      properties:
+        start_time:
+          type: string
+          example: "09:00"
+        end_time:
+          type: string
+          example: "10:00"
+
+    UpdateTimeSlotRequest:
+      type: object
+      properties:
+        start_time:
+          type: string
+          example: "09:00"
+        end_time:
+          type: string
+          example: "10:00"
+        is_active:
+          type: boolean
+
+    UserResource:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+          nullable: true
+        phone_number:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+        health_center:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              name:
+                type: string
+
+    StoreUserRequest:
+      type: object
+      required: [name, username, password, role_ids]
+      properties:
+        health_center_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          maxLength: 255
+        username:
+          type: string
+          maxLength: 50
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone_number:
+          type: string
+          maxLength: 20
+          nullable: true
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 255
+        role_ids:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+          default: ACTIVE
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        health_center_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          maxLength: 255
+        username:
+          type: string
+          maxLength: 50
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone_number:
+          type: string
+          maxLength: 20
+          nullable: true
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 255
+          nullable: true
+        role_ids:
+          type: array
+          items:
+            type: integer
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+
+    UpdatePatientContactRequest:
+      type: object
+      required: [phone_number]
+      properties:
+        phone_number:
+          type: string
+          pattern: "^[0-9]{10}$"
+          example: "0899999999"
+        health_center_id:
+          type: integer
+
+    UpdatePatientProfileRequest:
+      type: object
+      properties:
+        health_center_id:
+          type: integer
+        first_name:
+          type: string
+          maxLength: 100
+        last_name:
+          type: string
+          maxLength: 100
+        cid:
+          type: string
+          minLength: 13
+          maxLength: 13
+          pattern: "^[0-9]{13}$"
+        birth_date:
+          type: string
+          format: date
+          example: "1990-01-15"
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+          nullable: true
+        subdistrict:
+          type: string
+          maxLength: 100
+          nullable: true
+        district:
+          type: string
+          maxLength: 100
+          nullable: true
+        province:
+          type: string
+          maxLength: 100
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+      example:
+        first_name: "สมชาย"
+        last_name: "ใจดี"
+        birth_date: "1990-01-15"
+        gender: "MALE"
+        subdistrict: "ท่าพระ"
+        district: "บางกอกใหญ่"
+        province: "กรุงเทพมหานคร"
+        full_address: "99/1 ถนนจรัญสนิทวงศ์"
+        cid: "1234567890123"
+
+    StaffPatientProfile:
+      type: object
+      properties:
+        id:
+          type: integer
+        cid:
+          type: string
+          example: "1234567890123"
+        first_name:
+          type: string
+        last_name:
+          type: string
+        full_name:
+          type: string
+          example: "สมชาย ใจดี"
+        birth_date:
+          type: string
+          format: date
+          nullable: true
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+          nullable: true
+        phone_number:
+          type: string
+          example: "0812345678"
+        subdistrict:
+          type: string
+          nullable: true
+        district:
+          type: string
+          nullable: true
+        province:
+          type: string
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+
+    PatientRegisterRequest:
+      type: object
+      required: [cid, first_name, last_name, phone_number, birth_date, right_type_id]
+      properties:
+        cid:
+          type: string
+          minLength: 13
+          maxLength: 13
+          pattern: "^[0-9]{13}$"
+          description: เลขบัตรประชาชน 13 หลัก (unique — ต้องเป็นตัวเลขเท่านั้น)
+          example: "1234567890123"
+        first_name:
+          type: string
+          maxLength: 100
+        last_name:
+          type: string
+          maxLength: 100
+        phone_number:
+          type: string
+          pattern: "^[0-9]{10}$"
+          example: "0812345678"
+        birth_date:
+          type: string
+          format: date
+          example: "1990-01-15"
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+          nullable: true
+        subdistrict:
+          type: string
+          maxLength: 100
+          nullable: true
+        district:
+          type: string
+          maxLength: 100
+          nullable: true
+        province:
+          type: string
+          maxLength: 100
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+        right_type_id:
+          type: integer
+        main_hospital_name:
+          type: string
+          maxLength: 255
+          nullable: true

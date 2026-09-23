@@ -1,0 +1,6 @@
+queue-system/
+.ua/
+qrs-booking-lifecycle-sequence.html
+*.tmp
+.DS_Store
+Thumbs.db
