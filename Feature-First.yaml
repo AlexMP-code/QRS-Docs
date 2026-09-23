@@ -13,7 +13,7 @@ info:
     - `Patient` — ประชาชน / ผู้รับบริการ
 
     ## Rate Limiting Constraints
-    - Staff login: 5 ครั้ง/30 นาที (ผิด 5 ครั้ง → ล็อกชั่วคราว 30 นาที)
+    - Staff login: 5 ครั้ง/30 นาที ⚠️ ตั้งเป้าไว้แต่ยังใช้ไม่ได้จริง — middleware `throttle.staff` (`ThrottleStaffLogin`) นับเฉพาะ HTTP 401/403 แต่ login ผิด (username/password หรือ user INACTIVE) ตอบ **422** (ValidationException) จึงเข้า `RateLimiter::clear()` แทน `hit()` → counter ไม่เคยขึ้น → ไม่มีการล็อก 30 นาทีจริง
     - Patient login: 10 req/min (key by เบอร์โทร)
     - Patient register: 5 req/min (key by IP)
     - Unmask patient data: 10 req/min (key by user)
@@ -40,7 +40,7 @@ tags:
   - name: "3. Service Management"
     description: จัดการบริการ (Services), มอบหมายเจ้าหน้าที่ดูแล และกำหนดวันเปิดให้บริการ (Operating Days)
   - name: "4. Time Slot Master"
-    description: จัดการ Master Time Slots ช่วงเวลาให้บริการระดับจังหวัด (CRUD Time Slots)
+    description: "จัดการ Time Slots ราย รพ.สต. (เดิมตั้งไว้เป็น Master ระดับจังหวัด — จริงแล้ว per-center: time_slots ผูก health_center_id (FK) + unique (health_center_id, start_time, end_time)); CRUD เฉพาะ SUPER_ADMIN, toggle-status HC_ADMIN/SUPER_ADMIN"
   - name: "5. Roster & Staff Leave"
     description: จัดการตารางปฏิบัติงาน, รายชื่อบุคลากร, สลับเวร และลงวันลา (Leave Management)
   - name: "6. Appointment & Queue"
@@ -188,8 +188,8 @@ paths:
             รพ.สต. ของบัญชีมีสถานะไม่ใช่ ACTIVE
         "429":
           description: |
-            พยายามเข้าสู่ระบบมากเกินไป (throttle:staff) —
-            5 ครั้ง/30 นาที key by username+IP → ล็อกชั่วคราว 30 นาที
+            พยายามเข้าสู่ระบบมากเกินไป (throttle:staff) — 5 ครั้ง/30 นาที key by username+IP → ล็อกชั่วคราว 30 นาที
+            ⚠️ ตามที่วางไว้เป็นสเปค — Code ปัจจุบัน `ThrottleStaffLogin` นับเฉพาะ HTTP 401/403 (ส่วน login ผิดตอบ 422) → ปลายทางนี้ไม่ทำงานจริง ไม่มี protection brute-force
       security: []
 
   /v1/patient/me:
@@ -524,6 +524,7 @@ paths:
     post:
       tags: ["2. Health Center Management"]
       summary: "[Public] ค้นหา รพ.สต. ใกล้เคียง (Haversine)"
+      description: "Method: POST — คืนเฉพาะศูนย์ที่ status=ACTIVE และมีบริการที่เปิดใช้งาน (is_active) ในหมวดหมู่ที่เลือก (ไม่มี radius filter)"
       operationId: patientSearchNearby
       requestBody:
         required: true
@@ -599,8 +600,8 @@ paths:
   /v1/staff/health-centers:
     get:
       tags: ["2. Health Center Management"]
-      summary: "[Staff All] รายชื่อ รพ.สต. (Dropdown สำหรับเจ้าหน้าที่)"
-      description: SUPER_ADMIN เห็นทุกศูนย์แบบเต็ม; HC_ADMIN/STAFF เห็นเฉพาะศูนย์ตนเองแบบย่อ (ACTIVE / CLOSING)
+      summary: "[Auth (Sanctum เท่านั้น)] รายชื่อ รพ.สต. (Dropdown สำหรับเจ้าหน้าที่)"
+      description: auth:sanctum เท่านั้น — ไม่มี role middleware (STAFF / HC_ADMIN / SUPER_ADMIN / ผู้ป่วยที่ล็อกอินแล้วเรียกได้หมด). SUPER_ADMIN เห็นทุกศูนย์แบบเต็ม; HC_ADMIN/STAFF เห็นเฉพาะศูนย์ตนเองแบบย่อ (ACTIVE / CLOSING)
       operationId: staffListHealthCenters
       responses:
         "200":
@@ -620,8 +621,6 @@ paths:
                             - $ref: "#/components/schemas/HealthCenterDetail"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
 
   /v1/staff/admin/health-centers:
     get:
@@ -1120,7 +1119,7 @@ paths:
         - HC_ADMIN: เฉพาะศูนย์ของตนเอง
         - SUPER_ADMIN: ทุกศูนย์ (หรือกรองด้วย ?health_center_id=)
         - เฉพาะ SUPER_ADMIN / HEALTH_CENTER_ADMIN (STAFF เข้าไม่ได้ — 403)
-        - items = TimeSlotResource: id, health_center_id, label, start_time, end_time, sort_order, is_active
+        - items = TimeSlotResource: id, label, start_time, end_time, sort_order, is_active (resource ไม่คืน health_center_id)
       operationId: staffListTimeSlots
       parameters:
         - $ref: "#/components/parameters/HealthCenterIdFilter"
@@ -1144,7 +1143,7 @@ paths:
     post:
       tags: ["4. Time Slot Master"]
       summary: "[Super Admin] เพิ่มช่วงเวลาให้บริการใหม่"
-      description: เพิ่ม time slot ใหม่ให้ศูนย์สุขภาพ (ต้องระบุ health_center_id)
+      description: "เพิ่ม time slot ใหม่ให้ศูนย์สุขภาพ (SUPER_ADMIN ควรส่ง health_center_id) ⚠️ BUG: code ใช้ `$request->input('health_center_id')` ตรง ๆ ไม่มีการ validate/บังคับ — ถ้าไม่ส่งจะสร้าง slot ที่ health_center_id = null (center-less slot) ได้"
       operationId: staffCreateTimeSlot
       requestBody:
         required: true
@@ -1252,7 +1251,7 @@ paths:
     patch:
       tags: ["4. Time Slot Master"]
       summary: "[HC Admin / Super Admin] เปิด/ปิดใช้งานช่วงเวลา (is_active)"
-      description: ใช้ปิด slot แทนการลบ เมื่อมีคิวใช้ช่วงเวลาอยู่ (HC_ADMIN เฉพาะศูนย์ตัวเอง / SUPER_ADMIN ต้องตรงกับศูนย์ของ slot)
+      description: ใช้ปิด slot แทนการลบ เมื่อมีคิวใช้ช่วงเวลาอยู่ (HC_ADMIN เฉพาะศูนย์ตัวเอง) ⚠️ ข้อ "SUPER_ADMIN ต้องตรงกับศูนย์ของ slot" ยังไม่ถูกบังคับใน code — ใช้ $request->input('health_center_id') ไม่ validate; ถ้าไม่ส่งจะกรองด้วย id อย่างเดียว (ข้ามศูนย์ได้)
       operationId: staffToggleTimeSlotStatus
       responses:
         "200":
@@ -3238,7 +3237,7 @@ components:
           nullable: true
         capacity_type:
           type: string
-          enum: [PER_SLOT, PER_DAY]
+          enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
         category:
           $ref: "#/components/schemas/Category"
         capacity:
@@ -3463,9 +3462,6 @@ components:
       properties:
         id:
           type: integer
-        health_center_id:
-          type: integer
-          nullable: true
         label:
           type: string
           example: "08:30 - 09:30 น."
