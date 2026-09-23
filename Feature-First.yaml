@@ -185,7 +185,7 @@ paths:
           description: |
             ไม่สามารถเข้าสู่ระบบได้ —
             ยังไม่ได้ผูกกับ รพ.สต. (ยกเว้น SUPER_ADMIN) หรือ
-            รพ.สต. ของบัญชีมีสถานะไม่ใช่ ACTIVE
+            รพ.สต. ของบัญชีมีสถานะ INACTIVE (CLOSING ยัง login ได้ — ให้ staff จัดการคิวที่เหลือ)
         "429":
           description: |
             พยายามเข้าสู่ระบบมากเกินไป (throttle:staff) — 5 ครั้ง/30 นาที key by username+IP → ล็อกชั่วคราว 30 นาที
@@ -1768,6 +1768,7 @@ paths:
         ยกเลิกได้เฉพาะ CONFIRMED และยังยกเลิกทัน:
         - นัดวันหลัง → ทั้งวัน; นัดวันนี้ → เฉพาะก่อนช่วงเวลาสิ้นสุด (end_time); เลยแล้ว/ไม่ใช่ของเรา → 404
         เหตุผลเริ่มต้น (ถ้าไม่ระบุ): "ผู้ป่วยขอยกเลิกเองผ่านระบบ"
+        ถ้าศูนย์อยู่ในสถานะ CLOSING: หลัง cancel จะ trigger auto-close job (ปิดศูนย์เป็น INACTIVE เมื่อไม่มีคิว CONFIRMED เหลือ)
       operationId: patientCancelAppointment
       requestBody:
         content:
