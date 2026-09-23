@@ -16,7 +16,7 @@ info:
     - `patient` — ประชาชน / ผู้รับบริการ
 
     ## Rate Limiting
-    - Staff login: 5 ครั้ง/30 นาที (ผิด 5 ครั้ง → ล็อกชั่วคราว 30 นาที)
+    - Staff login: 5 ครั้ง/30 นาที (key by username+IP) — **เฉพาะ response 401/403 เท่านั้นที่ถูกนับ (การกรอกรหัสผิดที่คืน 422 ไม่ถูกนับ — ต้องแก้ที่โค้ด ThrottleStaffLogin ให้นับ 422 ด้วย)**
     - Patient login: 10 req/min (key by เบอร์โทร)
     - Patient register: 5 req/min (key by IP)
     - Unmask patient data: 10 req/min (key by user)
@@ -128,8 +128,8 @@ paths:
             รพ.สต. ของบัญชีมีสถานะไม่ใช่ ACTIVE
         "429":
           description: |
-            พยายามเข้าสู่ระบบมากเกินไป (throttle:staff) —
-            5 ครั้ง/30 นาที key by username+IP → ล็อกชั่วคราว 30 นาที
+            พยายามเข้าสู่ระบบมากเกินไป (throttle:staff) — 5 ครั้ง/30 นาที key by username+IP
+            **หมายเหตุ: ลิมิตนี้จะนับเฉพาะ response 401/403 เท่านั้น — การกรอกรหัสผิด (422) ไม่ถูกนับในปัจจุบัน (ต้องแก้ที่โค้ด)**
       security: []
 
   /v1/patient/login:
@@ -169,6 +169,11 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/PatientLoginSuccess"
                   - $ref: "#/components/schemas/PatientLoginNotRegistered"
+        "401":
+          description: |
+            ระบุวันเกิดไม่ถูกต้อง (ก่อนครบ 5 ครั้ง) —
+            "ข้อมูลวันเดือนปีเกิดไม่ถูกต้อง (เหลือโอกาสอีก N ครั้ง)"
+            (ครบ 5 ครั้ง → 423 ล็อก 30 นาที)
         "422":
           $ref: "#/components/responses/ValidationError"
         "423":
@@ -756,6 +761,15 @@ paths:
         ทุกครั้งจะถูกบันทึกใน audit_logs (staff_id, ip, user_agent)
         Throttle: 10 req/min ต่อผู้ใช้ (throttle:unmask)
       operationId: staffUnmaskPatient
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                health_center_id:
+                  type: integer
+                  description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
       responses:
         "200":
           description: OK — ข้อมูลผู้ป่วย
@@ -768,8 +782,8 @@ paths:
                     properties:
                       patient:
                         $ref: "#/components/schemas/UnmaskedPatient"
-        "403":
-          description: ไม่มีสิทธิ์ (นัดหมายไม่ใช่ของ รพ.สต. นี้)
+        "404":
+          description: ไม่พบข้อมูล — นัดหมายไม่ใช่ของ รพ.สต. ที่ระบุ
           content:
             application/json:
               schema:
@@ -1075,7 +1089,7 @@ paths:
       description: |
         HC_ADMIN: ยกเลิกได้เฉพาะวันลาในศูนย์ตัวเอง
         STAFF: ยกเลิกได้เฉพาะวันลาของตัวเอง
-        SUPER_ADMIN: ยกเลิกของใครก็ได้ (ระบุ health_center_id)
+        SUPER_ADMIN: ยกเลิกของใครก็ได้ (ไม่ต้องส่ง health_center_id — ระบุ {id} อย่างเดียว)
       operationId: staffDeleteLeave
       responses:
         "200":
@@ -1141,13 +1155,23 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
     delete:
-      tags: [Staff (ทุกบทบาท)]
+      tags: [HEALTH_CENTER_ADMIN, SUPER_ADMIN]
       summary: ลบบริการ (Soft Delete)
       description: |
         ลบได้เฉพาะบริการที่ไม่มีคิวสถานะ CONFIRMED ตั้งแต่วันนี้เป็นต้นไป
         (ถ้ามี → 422 "ไม่สามารถลบบริการได้ เนื่องจากมีคิวล่วงหน้าอยู่ N คิว")
-        STAFF: ลบได้เฉพาะบริการในศูนย์ตัวเอง
+        เฉพาะ HEALTH_CENTER_ADMIN / SUPER_ADMIN เท่านั้น (STAFF → 403 "ไม่มีสิทธิ์ลบบริการ")
+        SUPER_ADMIN: ต้องระบุ health_center_id ใน body
       operationId: staffDeleteService
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                health_center_id:
+                  type: integer
+                  description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
       responses:
         "200":
           description: OK
@@ -1161,6 +1185,12 @@ paths:
                       message:
                         type: string
                         example: "ลบบริการเรียบร้อยแล้ว"
+        "403":
+          description: STAFF ไม่มีสิทธิ์ลบบริการ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: มีคิวล่วงหน้าอยู่
           content:
@@ -1181,6 +1211,16 @@ paths:
       description: |
         สลับ is_active ของบริการ
         STAFF: เปิด/ปิดได้เฉพาะบริการในศูนย์ตัวเอง
+        SUPER_ADMIN: ต้องระบุ health_center_id ใน body
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                health_center_id:
+                  type: integer
+                  description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
       responses:
         "200":
           description: OK
@@ -1342,6 +1382,15 @@ paths:
         - สลับเป็น LEAVE ไม่ได้ถ้ายังมีคิว CONFIRMED ของบุคลากรนี้อยู่ตั้งแต่วันนี้เป็นต้นไป (422)
         STAFF: สลับเวรได้เฉพาะในศูนย์ตัวเอง
       operationId: staffToggleDuty
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                health_center_id:
+                  type: integer
+                  description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
       responses:
         "200":
           description: OK
@@ -1723,10 +1772,10 @@ paths:
   /v1/staff/health-centers:
     get:
       tags: [Staff (ทุกบทบาท)]
-      summary: รายชื่อ รพ.สต. (dropdown สำหรับ walk-in / จัดการผู้ใช้ / แก้ไขศูนย์)
+      summary: รายชื่อ รพ.สต. (dropdown สำหรับ walk-in / จัดการผู้ใช้ / แก้ไขศูนย์) — auth:sanctum เท่านั้น ไม่มี role middleware
       description: |
-        SUPER_ADMIN: เห็นทุกศูนย์ **แบบรายละเอียดเต็ม** (รวมถึงศูนย์ที่ปิดสมบูรณ์ INACTIVE) — ใช้ 401+role เพราะ SUPER_ADMIN
-        ไม่ต้องส่ง health_center_id
+        (route นี้ไม่ได้ผูก role middleware — เข้าถึงได้เมื่อ login แล้วทุก role รวมถึง Patient token เรียกได้)
+        SUPER_ADMIN: เห็นทุกศูนย์ **แบบรายละเอียดเต็ม** (รวมถึงศูนย์ที่ปิดสมบูรณ์ INACTIVE) —ไม่ต้องส่ง health_center_id
         HC_ADMIN/STAFF: เห็นเฉพาะศูนย์ตัวเอง **แบบย่อ (dropdown)** — เห็นเฉพาะศูนย์ที่เปิดรับจอง (ACTIVE) หรืออยู่ระหว่างปิดรับจอง (CLOSING) เท่านั้น; ศูนย์ที่ปิดสมบูรณ์ (INACTIVE) จะถูกซ่อน
       operationId: staffListHealthCenters
       responses:
@@ -1748,8 +1797,6 @@ paths:
                             - $ref: "#/components/schemas/HealthCenterDetail"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
 
   /v1/staff/health-centers/{id}:
     parameters:
@@ -1931,7 +1978,7 @@ paths:
         - HC_ADMIN: เฉพาะศูนย์ของตนเอง
         - SUPER_ADMIN: ทุกศูนย์ (หรือกรองด้วย ?health_center_id=)
         - เฉพาะ SUPER_ADMIN / HEALTH_CENTER_ADMIN เท่านั้น (STAFF เข้าไม่ได้ — 403)
-        - items = TimeSlotResource: id, health_center_id, label, start_time, end_time, sort_order, is_active
+        - items = TimeSlotResource: id, label, start_time, end_time, sort_order, is_active (resource ไม่คืน health_center_id)
         - หมายเหตุ: จำนวนคิวล่วงหน้า (future_appointments_count) ไม่ถูกส่งกลับใน response
       operationId: staffListTimeSlots
       parameters:
@@ -1958,8 +2005,9 @@ paths:
       summary: เพิ่มช่วงเวลาใหม่
       description: |
         เพิ่ม time slot ใหม่ให้ศูนย์สุขภาพ (label และ sort_order คำนวณอัตโนมัติจาก start_time/end_time)
-        - SUPER_ADMIN เท่านั้น (ต้องระบุ health_center_id)
+        - SUPER_ADMIN เท่านั้น (ควรระบุ health_center_id)
         - ห้าม start_time/end_time ทับซ้อนกับ slot ที่มีอยู่แล้วในศูนย์เดียวกัน
+        - ⚠️ BUG: code ใช้ `$request->input('health_center_id')` ตรง ๆ ไม่ validate/บังคับ — ถ้าไม่ส่งจะสร้าง slot ที่ health_center_id = null (center-less slot) ได้
       operationId: staffCreateTimeSlot
       requestBody:
         required: true
@@ -2076,8 +2124,18 @@ paths:
       description: |
         สลับ is_active ของ time slot (true ↔ false)
         - ใช้ปิด slot แทนการลบ เมื่อมีคิวใช้ช่วงเวลาอยู่
-        - HC_ADMIN: เฉพาะศูนย์ของตนเอง / SUPER_ADMIN: ต้องระบุ health_center_id ให้ตรงกับศูนย์ของ slot
+        - HC_ADMIN: เฉพาะศูนย์ของตนเอง
+        - ⚠️ SUPER_ADMIN: แม้ description เดิมจะบอก "ต้องระบุ health_center_id ให้ตรงกับศูนย์ของ slot" แต่ code ใช้ `$request->input('health_center_id')` ไม่ validate — ถ้าไม่ส่งจะกรองด้วย id อย่างเดียว (ข้ามศูนย์ได้)
       operationId: staffToggleTimeSlotStatus
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                health_center_id:
+                  type: integer
+                  description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
       responses:
         "200":
           description: OK
@@ -2104,7 +2162,7 @@ paths:
 
   /v1/staff/appointments/walk-in:
     post:
-      tags: [STAFF]
+      tags: [Staff (ทุกบทบาท)]
       summary: ออกคิว Walk-in (เจ้าหน้าที่สร้างแทนผู้ป่วย)
       description: |
         เงื่อนไขปฏิเสธ (422): ศูนย์ของบริการนั้นอยู่ในสถานะไม่รับการจองใหม่ (CLOSING / INACTIVE),
@@ -2112,6 +2170,8 @@ paths:
         - สำหรับบริการที่เปิดให้เลือกหมอ (allow_staff_selection=true): ต้องส่ง staff_id
           (หมอที่ผูกกับบริการ, สถานะ ACTIVE, ไม่ลา, ยังไม่เต็ม round นั้น) — ไม่ส่ง/ส่งซ้ำ/หมอลา/ไม่ผูก → 422
         - booked_by_type = STAFF เสมอสำหรับ walk-in
+        - STAFF (ไม่มี role บริหาร): ออกคิวได้เฉพาะ Services ที่ได้รับมอบหมาย — ไม่ได้รับมอบหมาย → 403 "ไม่ได้รับมอบหมายให้ให้บริการนี้"
+        - SUPER_ADMIN: ต้องระบุ health_center_id ใน body (ข้ามศูนย์)
       operationId: staffWalkInBooking
       requestBody:
         required: true
@@ -2143,6 +2203,12 @@ paths:
                           patient_name:
                             type: string
                             example: "สมชาย ใจดี"
+        "403":
+          description: STAFF ไม่ได้รับมอบหมายให้ให้บริการนี้ (ใช้ได้เฉพาะ assigned services)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -3672,13 +3738,10 @@ components:
 
     TimeSlotResource:
       type: object
-      description: ข้อมูลช่วงเวลา (ใช้ใน response ของ time-slot endpoints)
+      description: ข้อมูลช่วงเวลา (ใช้ใน response ของ time-slot endpoints) — resource ไม่คืน health_center_id
       properties:
         id:
           type: integer
-        health_center_id:
-          type: integer
-          nullable: true
         label:
           type: string
           example: "08:30 - 09:30 น."
@@ -3697,6 +3760,9 @@ components:
       type: object
       required: [start_time, end_time]
       properties:
+        health_center_id:
+          type: integer
+          description: ID ของศูนย์ (ควรระบุเสมอ) — ⚠️ code ไม่บังคับ (ดูหมายเหตุ bug ของ endpoint)
         start_time:
           type: string
           description: เวลาเริ่มต้น (HH:MM)
@@ -3709,6 +3775,9 @@ components:
     UpdateTimeSlotRequest:
       type: object
       properties:
+        health_center_id:
+          type: integer
+          description: "SUPER_ADMIN: ควรระบุเพื่อจำกัดขอบเขตศูนย์ — ⚠️ code ไม่บังคับ (ถ้าไม่ส่งอาจแก้ slot ข้ามศูนย์ได้)"
         start_time:
           type: string
           description: เวลาเริ่มต้นใหม่ (HH:MM)
