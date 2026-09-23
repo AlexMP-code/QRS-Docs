@@ -1161,17 +1161,15 @@ paths:
         ลบได้เฉพาะบริการที่ไม่มีคิวสถานะ CONFIRMED ตั้งแต่วันนี้เป็นต้นไป
         (ถ้ามี → 422 "ไม่สามารถลบบริการได้ เนื่องจากมีคิวล่วงหน้าอยู่ N คิว")
         เฉพาะ HEALTH_CENTER_ADMIN / SUPER_ADMIN เท่านั้น (STAFF → 403 "ไม่มีสิทธิ์ลบบริการ")
-        SUPER_ADMIN: ต้องระบุ health_center_id ใน body
+        SUPER_ADMIN: ต้องระบุ health_center_id (query param)
       operationId: staffDeleteService
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                health_center_id:
-                  type: integer
-                  description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
+      parameters:
+        - name: health_center_id
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
       responses:
         "200":
           description: OK
