@@ -82,7 +82,7 @@
 
 **ข้อปลีกย่อยที่นักพัฒนาต้องรู้:**
 - ⚠️ **ข้อความ error ของ booking ถูกกลืนหมด** — client เห็นเพียง `422 "ไม่สามารถจองคิวได้ กรุณาลองใหม่อีกครั้ง"` สาเหตุจริง (เช่น "คิวเต็ม", "จองซ้ำ") อยู่ใน server log เท่านั้น
-- ⚠️ **ไม่มีการเช็ค "หมอทั้งหมดลางาน"** ในเส้นทาง patient booking (ต่างจาก walk-in) — `StaffLeave::isServiceAvailable()` ถูกเรียกเฉพาะฝั่ง staff; ผู้ป่วยจะเจอผลแบบอ้อมๆ คือ staff-selection แสดงหมอ 0 คน หรือ capacity ยังว่างในกรณี PER_MASSEUSE (ที่นับรวมคนลา)
+- ✅ **patient booking เช็ค "staff ทั้งหมดลา" เหมือน walk-in แล้ว** — `BookingService` เรียก `StaffLeave::isServiceAvailable()` ก่อนจอง (แก้ gap #6); ถ้าไม่มี pool (assigned/selectable) ที่กำหนด → ถือว่าเปิดให้บริการ (ให้ capacity/operating-day ตัดสิน)
 - จองซ้ำได้ถ้าคiuก่อนหน้าเป็น CANCELLED/COMPLETED/NO_SHOW (นับเฉพาะ CONFIRMED)
 
 ### 2.4 ประวัติและการจัดการนัดหมาย
@@ -116,14 +116,14 @@
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
-| `POST` | `/v1/staff/login` | ทุกคน (Public) | username+password; ต้อง user `status=ACTIVE`; ต้องศูนย์ `ACTIVE` |
+| `POST` | `/v1/staff/login` | ทุกคน (Public) | username+password; ต้อง user `status=ACTIVE`; ต้องศูนย์ `ACTIVE` หรือ `CLOSING` |
 | `GET` | `/v1/staff/me` | ทุกคน (auth:sanctum) | ดูโปรไฟล์ตัวเอง + roles + health center |
 | `PATCH` | `/v1/staff/me` | ทุกคน (auth:sanctum) | แก้ชื่อ/รหัสเอง (password hash ใหม่) |
 | `POST` | `/v1/staff/logout` | ทุกคน (auth:sanctum) | ลบ token ปัจจุบัน |
 
 **พฤติกรรมจริงของ login:**
 - User `status != ACTIVE` (รวม INACTIVE) → ถูกมองเสมือน "ไม่รู้จัก" → **422** "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง" (เหมือน username ผิด)
-- ศูนย์ไม่ใช่ ACTIVE (CLOSING/INACTIVE) → **403** "รพ.สต. ต้นสังกัดถูกระงับการใช้งานชั่วคราว" (แยกชัดเจน)
+- ศูนย์เป็น **INACTIVE** → **403** "รพ.สต. ต้นสังกัดถูกระงับการใช้งานชั่วคราว" (CLOSING ยัง login ได้ — ให้ staff จัดการคิวที่เหลือ)
 - SUPER_ADMIN **ข้าม** การตรวจศูนย์ (ไม่ต้องผูก health center, `health_center_id` เป็น null ได้)
 - Token อายุ **24 ชม.** (Sanctum `expiration => 1440`); logout ลบ token; ลบ user → ลบ tokens ทั้งหมด
 
@@ -274,7 +274,7 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | `GET` | `/v1/staff/admin/health-centers` | ทุกศูนย์ ทุก status พร้อม filter (q/code/province/district/status) + paginate |
 | `POST` | `/v1/staff/admin/time-slots` | เพิ่ม slot — SUPER_ADMIN only; ⚠️ ไม่ส่ง `health_center_id` → สร้าง center-less ได้ |
 | `PUT` | `/v1/staff/admin/time-slots/{id}` | แก้ slot — SUPER_ADMIN only; ⚠️ ไม่ส่ง center → แก้ได้ข้ามศูนย์ |
-| `DELETE` | `/v1/staff/admin/time-slots/{id}` | ลบ slot — SUPER_ADMIN only; **⚠️ บล็อกถ้ามี appointment ใดๆ ที่ใช้ slot นี้ (ทุกวัน ทุกสถานะ)** — ไม่ใช่แค่ CONFIRMED อนาคต; error กลืนเป็น "ไม่สามารถลบช่วงเวลาได้ กรุณาลองใหม่อีกครั้ง" 422 |
+| `DELETE` | `/v1/staff/admin/time-slots/{id}` | ลบ slot — SUPER_ADMIN only; **⚠️ บล็อกถ้ามี appointment ใดๆ ที่ใช้ slot นี้ (ทุกวัน ทุกสถานะ)** — ไม่ใช่แค่ CONFIRMED อนาคต; error กลับ message เจาะจง "ไม่สามารถลบช่วงเวลาได้ เนื่องจากมีคิวที่ใช้ช่วงเวลานี้อยู่ กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน" 422 |
 
 ### 5.3 Cross-Center Operations (ใช้ endpoint เดียวกับ HC Admin แต่ scope ข้ามศูนย์)
 
@@ -290,13 +290,13 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | สถานะ | ความหมาย |
 |---|---|
 | `ACTIVE` | เปิดรับจองตามปกติ |
-| `CLOSING` | ปิดรับจองใหม่ (login staff ใหม่ **บล็อก** 403), ผู้ป่วยจองไม่ได้ (isBookable=false), แต่ staff ที่มี token ค้างยังทำงาน + ผู้ป่วยยังเห็น/ยกเลิกนัดเดิมได้ |
+| `CLOSING` | ปิดรับจองใหม่, ผู้ป่วยจองไม่ได้ (isBookable=false), แต่ staff login ได้ (เฉพาะ INACTIVE บล็อก login) + ผู้ป่วยยังเห็น/ยกเลิกนัดเดิมได้ |
 | `INACTIVE` | ปิดสมบูรณ์ — ซ่อนจากผู้ป่วย (404) และ staff ใหม่ login ไม่ได้ |
 
 **Transitions ที่ทำได้ (SUPER_ADMIN toggle):** ACTIVE→CLOSING, CLOSING→ACTIVE, INACTIVE→ACTIVE (ไม่มี ACTIVE/CLOSING→INACTIVE ผ่าน endpoint นี้ — INACTIVE เกิดจาก auto-close job เท่านั้น)
 
 **⚠️ Auto-Close (จบตามจริง):**
-- **ไม่มี scheduler/cron** — `CloseHealthCenterJob` ถูก dispatch เฉพาะเมื่อ staff อัปเดตสถานะ appointment เป็น terminal (COMPLETED/CANCELLED/NO_SHOW) **ขณะที่ศูนย์อยู่ใน CLOSING**
+- **ไม่มี scheduler/cron** — `CloseHealthCenterJob` ถูก dispatch เมื่อศูนย์อยู่ใน CLOSING และ (1) staff อัปเดตสถานะ appointment เป็น terminal (COMPLETED/CANCELLED/NO_SHOW) หรือ (2) ผู้ป่วยยกเลิกคิวผ่าน `PATCH /v1/patient/appointments/{id}/cancel`
 - Job เช็ค: ศูนย์ยังเป็น CLOSING? มี CONFIRMED appointment เหลืออยู่ไหม? ถ้าไม่มี → เปลี่ยนเป็น INACTIVE + Audit Log `AUTO_CLOSE_HEALTH_CENTER`
 - **⚠️ เช็ค CONFIRMED ไม่กรองวันที่** — คิว CONFIRMED ในอดีต (ที่ยังไม่ถูกเปลี่ยนสถานะ) ก็ถือว่า "ยังค้าง" → บล็อกไม่ให้ศูนย์ปิดได้ ซึ่งอาจเป็น bug
 
@@ -449,6 +449,6 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | 3 | Auto-close เช็ค CONFIRMED โดยไม่กรองวันที่ → คิวเก่าในอดีตบล็อกการปิดศูนย์ | bug | ศูนย์อาจไม่ปิดเป็น INACTIVE |
 | 4 | booking error ทั้งหมด กลืนเป็นข้อความเดียว | design | ผู้ใช้รู้สาเหตุไม่ได้; debug ต้องดู log |
 | 5 | DELETE time-slot บล็อก**ทุก** appointment (ทุกวันที่/สถานะ) แม้จะตั้งใจจะบล็อกเฉพาะคิวล่วงหน้า | bug | ลบ slot เก่าไม่ได้ |
-| 6 | patient booking ไม่เช็ค "staff ทั้งหมดลา" (ต่างจาก walk-in) | gap | อาจจองได้แม้ไม่มีคนให้บริการ (กรณี PER_MASSEUSE/PER_SLOT/PER_DAY) |
+| 6 | patient booking ไม่เช็ค "staff ทั้งหมดลา" (ต่างจาก walk-in) — ✅ **แก้แล้ว**: BookingService เรียก `StaffLeave::isServiceAvailable()` เหมือน walk-in; pool ว่าง → capacity ตัดสิน | fixed | — |
 | 7 | `GET /v1/staff/health-centers` ถ้า call ด้วย Patient token → 500 | gap | route ควรมี role gate |
 | 8 | role middleware fallback token ability dead (`role:staff` vs `STAFF`) | dead code | สร้างความเข้าใจผิด; ควรลบ fallback หรือแก้ case |
