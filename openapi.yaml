@@ -1250,12 +1250,12 @@ paths:
       - $ref: "#/components/parameters/ServiceId"
 
     put:
-      tags: [Staff (ทุกบทบาท)]
+      tags: [HEALTH_CENTER_ADMIN]
       summary: มอบหมาย/ถอดเจ้าหน้าที่ดูแลบริการ
       description: |
+        เฉพาะ HC_ADMIN / SUPER_ADMIN (STAFF → 403)
         HC_ADMIN: กำหนดเฉพาะศูนย์ตัวเอง / STAFF role เท่านั้น
         SUPER_ADMIN: ต้องระบุ health_center_id
-        STAFF: แก้ได้เฉพาะบริการในศูนย์ตัวเอง (ส่วนใหญ่ใช้เพื่อดู/กันหมอ)
         ส่ง user_ids=[] เพื่อถอดมอบหมายทั้งหมด
       operationId: staffSyncAssignees
       requestBody:
@@ -1778,9 +1778,9 @@ paths:
   /v1/staff/health-centers:
     get:
       tags: [Staff (ทุกบทบาท)]
-      summary: รายชื่อ รพ.สต. (dropdown สำหรับ walk-in / จัดการผู้ใช้ / แก้ไขศูนย์) — auth:sanctum เท่านั้น ไม่มี role middleware
+      summary: รายชื่อ รพ.สต. (dropdown สำหรับ walk-in / จัดการผู้ใช้ / แก้ไขศูนย์) — role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN
       description: |
-        (route นี้ไม่ได้ผูก role middleware — เข้าถึงได้เมื่อ login แล้วทุก role รวมถึง Patient token เรียกได้)
+        เฉพาะ staff token (STAFF / HC_ADMIN / SUPER_ADMIN) — Patient token → 403
         SUPER_ADMIN: เห็นทุกศูนย์ **แบบรายละเอียดเต็ม** (รวมถึงศูนย์ที่ปิดสมบูรณ์ INACTIVE) —ไม่ต้องส่ง health_center_id
         HC_ADMIN/STAFF: เห็นเฉพาะศูนย์ตัวเอง **แบบย่อ (dropdown)** — เห็นเฉพาะศูนย์ที่เปิดรับจอง (ACTIVE) หรืออยู่ระหว่างปิดรับจอง (CLOSING) เท่านั้น; ศูนย์ที่ปิดสมบูรณ์ (INACTIVE) จะถูกซ่อน
       operationId: staffListHealthCenters

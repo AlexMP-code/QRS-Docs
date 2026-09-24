@@ -116,9 +116,9 @@
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
 | `POST` | `/v1/staff/login` | ทุกคน (Public) | username+password; ต้อง user `status=ACTIVE`; ต้องศูนย์ `ACTIVE` หรือ `CLOSING` |
-| `GET` | `/v1/staff/me` | ทุกคน (auth:sanctum) | ดูโปรไฟล์ตัวเอง + roles + health center |
-| `PATCH` | `/v1/staff/me` | ทุกคน (auth:sanctum) | แก้ชื่อ/รหัสเอง (password hash ใหม่) |
-| `POST` | `/v1/staff/logout` | ทุกคน (auth:sanctum) | ลบ token ปัจจุบัน |
+| `GET` | `/v1/staff/me` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูโปรไฟล์ตัวเอง + roles + health center |
+| `PATCH` | `/v1/staff/me` | STAFF, HC_ADMIN, SUPER_ADMIN | แก้ชื่อ/รหัสเอง (password hash ใหม่) |
+| `POST` | `/v1/staff/logout` | STAFF, HC_ADMIN, SUPER_ADMIN | ลบ token ปัจจุบัน |
 
 **พฤติกรรมจริงของ login:**
 - User `status != ACTIVE` (รวม INACTIVE) → ถูกมองเสมือน "ไม่รู้จัก" → **422** "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง" (เหมือน username ผิด)
@@ -143,7 +143,7 @@
 | `PUT` | `/v1/staff/services/{id}` | STAFF, HC_ADMIN, SUPER_ADMIN | แก้บริการ — **STAFF ทำได้จริง**; เปิด staff-selection ต้อง PER_MASSEUSE + มี selectable staff ≥1; ปิดต้องไม่มีคิว CONFIRMED ตั้งแต่วันนี้เป็นต้นไป |
 | `PATCH` | `/v1/staff/services/{id}/toggle-status` | STAFF, HC_ADMIN, SUPER_ADMIN | เปิด/ปิดบริการ — **STAFF ทำได้จริง** (ไม่มี in-controller gate) |
 | `DELETE` | `/v1/staff/services/{id}` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ลบบริการ (**STAFF → 403 "ไม่มีสิทธิ์ลบบริการ"**); 422 ถ้ามีคิว CONFIRMED ตั้งแต่วันนี้; ข้อความ error อื่นกลืนเป็น 422 ทั่วไป |
-| `PUT` | `/v1/staff/services/{id}/assignees` | STAFF, HC_ADMIN, SUPER_ADMIN | ผูก User (role **STAFF** เท่านั้น) เข้ากับบริการ — **STAFF ทำได้จริง**; user ต้องอยู่ศูนย์เดียวกัน |
+| `PUT` | `/v1/staff/services/{id}/assignees` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ผูก User (role **STAFF** เท่านั้น) เข้ากับบริการ — STAFF ไม่ได้; user ต้องอยู่ศูนย์เดียวกัน |
 | `PUT` | `/v1/staff/services/{id}/staff` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ผูกหมอที่เลือกได้ (selectable staff, pivot `service_staff`) — STAFF ไม่ได้; หมอต้องศูนย์เดียวกัน + หมวดหมู่เดียวกับบริการ; แกะหมอที่มีคิว CONFIRMED อนาคตไม่ได้; Audit Log |
 | `PUT` | `/v1/staff/services/{id}/time-slot-days` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ตั้งค่าวันเปิด (Recurring Weekly ผ่าน `days_mask` bit 1-7); ห้ามลบ (slot,วัน) ที่มีคิว CONFIRMED อนาคต; Audit Log |
 
@@ -202,9 +202,7 @@
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
-| `GET` | `/v1/staff/health-centers` | **ทุกคน (auth:sanctum) — ไม่มี role gate** | SUPER_ADMIN: ทุกศูนย์ (รายละเอียดเต็ม + status ทั้งหมด + has_webhook); STAFF/HC_ADMIN: ศูนย์ตัวเอง เฉพาะ ACTIVE/CLOSING (INACTIVE ซ่อน), คืนแค่ id/code/name/has_webhook |
-
-**⚠️ หมายเหตุ route:** Route มีแค่ `auth:sanctum` (ไม่มี role gate) แต่ controller เรียก `hasRole()` ซึ่ง Patient model ไม่มี relation `roles()` → ถ้า Patient token call จะเจอ **500 (RelationNotFoundException)** ในทางปฏิบัติจึงใช้งานได้เฉพาะ staff token
+| `GET` | `/v1/staff/health-centers` | STAFF, HC_ADMIN, SUPER_ADMIN | SUPER_ADMIN: ทุกศูนย์ (รายละเอียดเต็ม + status ทั้งหมด + has_webhook); STAFF/HC_ADMIN: ศูนย์ตัวเอง เฉพาะ ACTIVE/CLOSING (INACTIVE ซ่อน), คืนแค่ id/code/name/has_webhook |
 
 ---
 
@@ -375,9 +373,9 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | Method | Endpoint | Role gate (middleware) |
 |---|---|---|
 | POST | `/v1/staff/login` | public (`throttle.staff`) |
-| GET | `/v1/staff/me` | auth:sanctum |
-| PATCH | `/v1/staff/me` | auth:sanctum |
-| POST | `/v1/staff/logout` | auth:sanctum |
+| GET | `/v1/staff/me` | STAFF,HC_ADMIN,SUPER_ADMIN |
+| PATCH | `/v1/staff/me` | STAFF,HC_ADMIN,SUPER_ADMIN |
+| POST | `/v1/staff/logout` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | GET | `/v1/staff/dashboard/summary` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | GET | `/v1/staff/services` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | POST | `/v1/staff/services` | STAFF,HC_ADMIN,SUPER_ADMIN |
@@ -393,7 +391,7 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | POST | `/v1/staff/roster` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | PATCH | `/v1/staff/roster/{id}/toggle-duty` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | PATCH | `/v1/staff/patients/{id}/contact` | STAFF,HC_ADMIN,SUPER_ADMIN |
-| PUT | `/v1/staff/services/{id}/assignees` | STAFF,HC_ADMIN,SUPER_ADMIN |
+| PUT | `/v1/staff/services/{id}/assignees` | SUPER_ADMIN,HC_ADMIN |
 | GET | `/v1/staff/leaves` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | POST | `/v1/staff/leaves` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | DELETE | `/v1/staff/leaves/{id}` | STAFF,HC_ADMIN,SUPER_ADMIN |
@@ -414,7 +412,7 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | PATCH | `/v1/staff/patients/{id}` | SUPER_ADMIN,HC_ADMIN |
 | GET | `/v1/staff/admin/patients` | SUPER_ADMIN,HC_ADMIN |
 | PATCH | `/v1/staff/health-centers/{id}` | SUPER_ADMIN,HC_ADMIN |
-| GET | `/v1/staff/health-centers` | auth:sanctum (ไม่มี role gate) |
+| GET | `/v1/staff/health-centers` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | PUT | `/v1/staff/services/{id}/time-slot-days` | SUPER_ADMIN,HC_ADMIN |
 | PUT | `/v1/staff/services/{id}/staff` | SUPER_ADMIN,HC_ADMIN |
 
@@ -448,5 +446,5 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | 4 | booking error ทั้งหมด กลืนเป็นข้อความเดียว | design | ผู้ใช้รู้สาเหตุไม่ได้; debug ต้องดู log |
 | 5 | DELETE time-slot บล็อก**ทุก** appointment (ทุกวันที่/สถานะ) แม้จะตั้งใจจะบล็อกเฉพาะคิวล่วงหน้า | bug | ลบ slot เก่าไม่ได้ |
 | 6 | patient booking ไม่เช็ค "staff ทั้งหมดลา" (ต่างจาก walk-in) — ✅ **แก้แล้ว**: BookingService เรียก `StaffLeave::isServiceAvailable()` เหมือน walk-in; pool ว่าง → capacity ตัดสิน | fixed | — |
-| 7 | `GET /v1/staff/health-centers` ถ้า call ด้วย Patient token → 500 | gap | route ควรมี role gate |
+| 7 | `GET /v1/staff/health-centers` ถ้า call ด้วย Patient token → 500 — ✅ **แก้แล้ว**: route มี `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` แล้ว (รวม `/me`, `PATCH /me`, `/logout` ด้วย) | fixed | — |
 | 8 | role middleware fallback token ability dead (`role:staff` vs `STAFF`) | dead code | สร้างความเข้าใจผิด; ควรลบ fallback หรือแก้ case |
