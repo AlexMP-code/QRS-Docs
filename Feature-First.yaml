@@ -600,8 +600,8 @@ paths:
   /v1/staff/health-centers:
     get:
       tags: ["2. Health Center Management"]
-      summary: "[Auth (Sanctum เท่านั้น)] รายชื่อ รพ.สต. (Dropdown สำหรับเจ้าหน้าที่)"
-      description: auth:sanctum เท่านั้น — ไม่มี role middleware (STAFF / HC_ADMIN / SUPER_ADMIN / ผู้ป่วยที่ล็อกอินแล้วเรียกได้หมด). SUPER_ADMIN เห็นทุกศูนย์แบบเต็ม; HC_ADMIN/STAFF เห็นเฉพาะศูนย์ตนเองแบบย่อ (ACTIVE / CLOSING)
+      summary: "[Staff All] รายชื่อ รพ.สต. (Dropdown สำหรับเจ้าหน้าที่)"
+      description: role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN — เฉพาะ staff token (Patient token → 403). SUPER_ADMIN เห็นทุกศูนย์แบบเต็ม; HC_ADMIN/STAFF เห็นเฉพาะศูนย์ตนเองแบบย่อ (ACTIVE / CLOSING)
       operationId: staffListHealthCenters
       responses:
         "200":
@@ -1002,11 +1002,11 @@ paths:
 
     put:
       tags: ["3. Service Management"]
-      summary: "[Staff All] มอบหมาย/ถอด เจ้าหน้าที่ดูแลบริการ"
+      summary: "[HC Admin / Super Admin] มอบหมาย/ถอด เจ้าหน้าที่ดูแลบริการ"
       description: |
-        มอบหมาย STAFF เป็นผู้รับผิดชอบบริการ
+        มอบหมาย STAFF เป็นผู้รับผิดชอบบริการ (เฉพาะ HC_ADMIN / SUPER_ADMIN; STAFF → 403)
         ส่ง user_ids=[] เพื่อถอดมอบหมายทั้งหมด
-        HC_ADMIN/SUPER_ADMIN: กำหนดได้ทุกคนในศูนย์; STAFF: เฉพาะบริการในศูนย์ตัวเอง
+        HC_ADMIN: กำหนดได้ทุกคนในศูนย์ตัวเอง; SUPER_ADMIN: ต้องระบุ health_center_id
       operationId: staffSyncAssignees
       requestBody:
         required: true
