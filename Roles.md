@@ -197,6 +197,8 @@
 - **HC_ADMIN**: ลงให้ใครก็ได้ในศูนย์ตัวเอง (Request rule เช็ค `health_center_id` ตรง); ลบได้เฉพาะ leave ของศูนย์ตัวเอง (อื่น → 404)
 - **SUPER_ADMIN**: ลงให้ใครก็ได้; ลบได้ทุกที่
 - ลงวันลาซ้ำวันเดิม → ไม่สร้างซ้ำ (firstOrCreate)
+- **Rule กลาง** ของ "บริการเปิดให้จองวัน X ได้ไหม" คือ `StaffLeave::isServiceAvailable(service_id, date, health_center_id)` — ใช้ร่วมกัน 3 จุด: `GET /v1/staff/services?date=` (ซ่อนบริการที่ staff ทั้งหมดลาในวันนั้น), `GET /v1/staff/leaves/availability` (คืน bool ต่อ 1 service), และ `POST /v1/staff/appointments/walk-in` (บังคับ server-side ป้องกัน race) — `services?date=` คือ **canonical source** ของความพร้อมของบริการในมุม staff; availability เป็น convenience bool จาก rule เดียวกัน
+- **ความหมาย "หมอไม่ว่าง" มี 2 กลไก (อย่าสับสน):** `POST/DELETE /v1/staff/leaves` = **ลาหยุดเฉพาะวัน** (ผูก `leave_date`); `PATCH /v1/staff/roster/{id}/toggle-duty` เปลี่ยน `Staff.status=LEAVE` = **ปิดรับจองแบบต่อเนื่อง** จนกว่าจะสลับกลับ — `GET /v1/staff/roster?date=` merge ทั้งสองเป็น `effective_status` (ผลรวมหมายถึงหมอคนนั้นรับจองวันนั้นไม่ได้)
 
 ### 3.8 การดูรายชื่อ รพ.สต. (Dropdown)
 
@@ -204,7 +206,7 @@
 |---|---|---|---|
 | `GET` | `/v1/staff/health-centers` | STAFF, HC_ADMIN, SUPER_ADMIN | SUPER_ADMIN: ทุกศูนย์ (รายละเอียดเต็ม + status ทั้งหมด + has_webhook); STAFF/HC_ADMIN: ศูนย์ตัวเอง เฉพาะ ACTIVE/CLOSING (INACTIVE ซ่อน), คืนแค่ id/code/name/has_webhook |
 
----
+**หมายเหตุ:** สำหรับ STAFF/HC_ADMIN ผลลัพธ์คือแถวคงที่ 1 แถว (ศูนย์ตัวเองจาก session) — ข้อมูลหลักของ "ศูนย์ของฉัน" ได้จาก `GET /v1/staff/me` (ฝัง `health_center` เต็มรูปแบบ); endpoint นี้มีไว้สำหรับ SUPER_ADMIN (dropdown ข้ามศูนย์) ซึ่ง shape (12 คีย์) render ผ่าน `StaffHealthCenterResource` ตัวเดียวกับ `GET /v1/staff/admin/health-centers`
 
 ## 4. HC Admin (ผู้ดูแลประจำศูนย์)
 
