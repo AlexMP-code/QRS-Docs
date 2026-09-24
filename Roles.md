@@ -68,7 +68,6 @@
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
 | `POST` | `/v1/patient/book` | จองคิว — ระบบออกเลขคิว Sequential (ต่อศูนย์/ต่อวัน) |
-| `GET` | `/v1/patient/services/{id}/staff` | หมอที่เลือกได้ (auth แล้ว) — เฉพาะ `allow_staff_selection=true`; คืน `id, name, position` |
 
 **ลำดับการเช็คใน code (BookingService::createAppointment — transaction + lockForUpdate):**
 1. Service ต้อง `is_active` → ผิด 422
@@ -433,7 +432,6 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | GET | `/v1/patient/available-slots` | public |
 | GET | `/v1/patient/me` | auth:sanctum + abilities:role:patient |
 | POST | `/v1/patient/book` | auth:sanctum + abilities:role:patient |
-| GET | `/v1/patient/services/{id}/staff` | auth:sanctum + abilities:role:patient |
 | GET | `/v1/patient/appointments` | auth:sanctum + abilities:role:patient |
 | GET | `/v1/patient/appointments/{id}` | auth:sanctum + abilities:role:patient |
 | PATCH | `/v1/patient/appointments/{id}/cancel` | auth:sanctum + abilities:role:patient |

@@ -1577,53 +1577,6 @@ paths:
           $ref: "#/components/responses/ValidationError"
       security: []
 
-  /v1/patient/services/{id}/staff:
-    get:
-      tags: ["6. Appointment & Queue"]
-      summary: "[Patient] รายชื่อหมอ/เจ้าหน้าที่ที่เลือกได้สำหรับบริการ"
-      description: |
-        ใช้สำหรับบริการที่เปิดให้เลือกหมอ (allow_staff_selection=true) ก่อนจองคิว
-        - เห็นเฉพาะหมอที่ผูกกับบริการ (service_staff) + สถานะ ACTIVE + ไม่ลาวันที่ระบุ
-        - ถ้าบริการไม่ได้เปิดให้เลือกหมอ → คืน staff เป็น []
-      operationId: patientGetServiceStaff
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-          description: Service ID
-        - name: date
-          in: query
-          required: false
-          schema:
-            type: string
-            format: date
-          description: วันที่ต้องการตรวจ (default = วันนี้)
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/SuccessResponse"
-                  - type: object
-                    properties:
-                      date:
-                        type: string
-                        format: date
-                        description: วันที่ (คืนค่าเฉพาะเมื่อบริการเปิดให้เลือกหมอ allow_staff_selection=true)
-                      staff:
-                        type: array
-                        description: รายชื่อหมอที่เลือกได้ (ถ้าไม่เปิดให้เลือกหมอ → คืน [] และไม่มี key date)
-                        items:
-                          $ref: "#/components/schemas/SelectableStaff"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
   /v1/patient/book:
     post:
       tags: ["6. Appointment & Queue"]
@@ -2769,18 +2722,6 @@ components:
           description: หมอ/เจ้าหน้าที่ที่ผู้ป่วยเลือกได้ (service_staff) — มีเฉพาะเมื่อโหลดมาใน response
           items:
             $ref: "#/components/schemas/SelectableStaffWithStatus"
-
-    SelectableStaff:
-      type: object
-      description: หมอ/เจ้าหน้าที่ที่เลือกได้ (จาก GET /v1/patient/services/{id}/staff)
-      properties:
-        id:
-          type: integer
-        name:
-          type: string
-        position:
-          type: string
-          nullable: true
 
     SelectableStaffWithStatus:
       type: object
