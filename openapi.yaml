@@ -364,9 +364,13 @@ paths:
                   - $ref: "#/components/schemas/SuccessResponse"
                   - type: object
                     properties:
+                      health_center_status:
+                        type: string
+                        enum: [ACTIVE, CLOSING, INACTIVE]
+                        description: สถานะปัจจุบันของศูนย์ (ACTIVE = เปิดรับจอง / CLOSING = กำลังปิด — ยังเห็นบริการได้)
                       data:
                         type: array
-                        description: บริการฉบับย่อ (projection ของ Service — ไม่มี is_active/allow_staff_selection/staff lists)
+                        description: บริการฉบับย่อ (projection ของ Service — ไม่มี is_active/assigned_staff)
                         items:
                           $ref: "#/components/schemas/PatientServiceBrief"
         "404":
@@ -2939,7 +2943,9 @@ components:
       type: object
       description: |
         บริการฉบับย่อ (response ของ GET /v1/patient/health-centers/{id}/services)
-        — projection แบบจำกัด: ไม่มี is_active / allow_staff_selection / assigned_staff / selectable_staff
+        — projection แบบจำกัด: ไม่มี is_active / assigned_staff
+        - มี allow_staff_selection สำหรับสลับ UI เลือกหมอ <-> จองทั่วไป
+        - category / capacity ผ่าน Resource ที่กรองฟิลด์ (ไม่มี created_at / updated_at)
       properties:
         id:
           type: integer
@@ -2951,6 +2957,9 @@ components:
         capacity_type:
           type: string
           enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
+        allow_staff_selection:
+          type: boolean
+          description: เปิด/ปิดให้ผู้ป่วยเลือกหมอ/เจ้าหน้าที่สำหรับบริการนี้
         category:
           $ref: "#/components/schemas/Category"
         capacity:
@@ -3315,6 +3324,10 @@ components:
           type: number
           format: double
           nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, CLOSING, INACTIVE]
+          description: สถานะศูนย์ (ACTIVE / CLOSING — หน้าผู้ป่วยจะได้ 404 ถ้า INACTIVE)
 
     StaffHealthCenterDropdown:
       type: object
@@ -3526,6 +3539,9 @@ components:
 
     StaffLeaveResource:
       type: object
+      description: |
+        บันทึกวันลา (StaffLeaveResource) — whitelist ฟิลด์เท่านั้น:
+        ไม่ expose created_at / updated_at
       properties:
         id:
           type: integer
@@ -3554,12 +3570,6 @@ components:
               type: string
             username:
               type: string
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
 
     StoreLeaveRequest:
       type: object
@@ -3795,13 +3805,16 @@ components:
 
     UserResource:
       type: object
-      description: ข้อมูลผู้ใช้
+      description: |
+        ข้อมูลผู้ใช้ (AdminUserResource) — whitelist ไม่มี created_at / updated_at /
+        ไม่ expose discord_webhook_url ของ รพ.สต.
+        roles เป็น array ของชื่อ role (string)
       properties:
         id:
           type: integer
-        name:
-          type: string
         username:
+          type: string
+        name:
           type: string
         email:
           type: string
@@ -3813,22 +3826,16 @@ components:
           type: string
           enum: [ACTIVE, INACTIVE]
         health_center:
-          type: object
-          nullable: true
-          properties:
-            id:
-              type: integer
-            name:
-              type: string
+          allOf:
+            - $ref: "#/components/schemas/HealthCenter"
+            - type: object
+              nullable: true
+          description: รพ.สต. ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
         roles:
           type: array
+          description: ชื่อ role ทั้งหมดของผู้ใช้ (pluck) — array ของ string
           items:
-            type: object
-            properties:
-              id:
-                type: integer
-              name:
-                type: string
+            type: string
 
     StoreUserRequest:
       type: object

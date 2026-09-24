@@ -51,8 +51,8 @@
 | `GET` | `/v1/patient/categories` | หมวดหมู่บริการ — เฉพาะ `status=ACTIVE`, เรียงตาม `sort_order` |
 | `GET` | `/v1/patient/right-types` | สิทธิการรักษา — เฉพาะ `status=ACTIVE` (UCS, OFC, SSS, CASH, OTHER) |
 | `POST` | `/v1/patient/nearby-centers` | ค้นหา รพ.สต. ใกล้เคียง (Haversine; **เฉพาะ** ACTIVE + มีบริการ active ในหมวดที่เลือก; **ไม่มี** radius filter) |
-| `GET` | `/v1/patient/health-centers/{id}` | รายละเอียด รพ.สต. — **ACTIVE หรือ CLOSING** เห็นได้; INACTIVE → 404 |
-| `GET` | `/v1/patient/health-centers/{id}/services` | บริการของศูนย์ — เฉพาะ services `is_active=true` **และ** มี pivot `service_time_slot` อย่างน้อย 1 แถว |
+| `GET` | `/v1/patient/health-centers/{id}` | รายละเอียด รพ.สต. — **ACTIVE หรือ CLOSING** เห็นได้; INACTIVE → 404; คืน `status` ของศูนย์ด้วย |
+| `GET` | `/v1/patient/health-centers/{id}/services` | บริการของศูนย์ — เฉพาะ services `is_active=true` **และ** มี pivot `service_time_slot` ≥ 1 แถว **และ** อยู่หมวดหมู่ ACTIVE; แต่ละรายการคืน `allow_staff_selection`; envelope คืน `health_center_status`; response ผ่าน Resource (**ไม่มี** `created_at`/`updated_at`) |
 | `GET` | `/v1/patient/available-slots` | ตรวจสอบช่วงเวลาว่าง — พารามิเตอร์ **มีแค่** `service_id` + `date` (ต้อง `>= today`) |
 
 **หมายเหตุ available-slots (พฤติกรรมจริง):**
@@ -188,7 +188,7 @@
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
-| `GET` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูวันลา — filter `?date=`, `?staff_user_id=` |
+| `GET` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูวันลา — filter `?date=`, `?staff_user_id=`; response ผ่าน `StaffLeaveResource` (**ไม่มี** `created_at`/`updated_at`) |
 | `POST` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ลงวันลา (auto-approved) — `leave_date >= today` (ย้อนหลังไม่ได้); บล็อกถ้ามีคิว CONFIRMED ในวันนั้น; **idempotent** (ซ้ำวันเดิมคืน row เดิม, HTTP 200); ถ้ายังไม่ลิงก์โปรไฟล์หมอกับบัญชี → **ลิงก์อัตโนมัติ** เมื่อระบุตัวได้ไม่กำกวม (ศูนย์เดียว [+ หมวดหมู่ที่ตรงกับบริการที่ได้รับมอบหมาย]; ถ้า ambiguos หลายโปรไฟล์ → ไม่เดา) เพื่อให้ระบบลาของหมอใน roster ถูกนำไปกรองในหน้าจองผู้ป่วยจริง |
 | `DELETE` | `/v1/staff/leaves/{id}` | STAFF, HC_ADMIN, SUPER_ADMIN | ลบวันลา — scope ตามด้านล่าง |
 | `GET` | `/v1/staff/leaves/availability` | STAFF, HC_ADMIN, SUPER_ADMIN | เช็คว่าบริการเปิดให้บริการวันที่นั้นหรือไม่ (`service_id`+`date` บังคับ) |
@@ -229,7 +229,7 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
-| `GET` | `/v1/staff/admin/users` | ดูผู้ใช้ — HC_ADMIN เฉพาะศูนย์ตัวเอง; SUPER_ADMIN ทุกศูนย์ (filter ได้) |
+| `GET` | `/v1/staff/admin/users` | ดูผู้ใช้ — HC_ADMIN เฉพาะศูนย์ตัวเอง; SUPER_ADMIN ทุกศูนย์ (filter ได้); response ผ่าน `AdminUserResource` — `roles` เป็น array-string, **ไม่มี** `created_at`/`updated_at`/`discord_webhook_url` |
 | `POST` | `/v1/staff/admin/users` | สร้างผู้ใช้ — **HC_ADMIN จำกัด role_ids ได้เฉพาะ STAFF (422); บังคับ health_center_id ของตัวเอง**; SUPER_ADMIN สร้างได้ทุก role/ทุกศูนย์ (null ได้) |
 | `PATCH` | `/v1/staff/admin/users/{id}` | แก้ผู้ใช้ — HC_ADMIN: ห้ามแก้ SUPER_ADMIN (403); ห้ามข้ามศูนย์ (404); role STAFF เท่านั้น |
 | `DELETE` | `/v1/staff/admin/users/{id}` | ลบผู้ใช้ — ห้ามลบตัวเอง (422); HC_ADMIN ห้ามลบ SUPER_ADMIN (403); ห้ามลบคนสุดท้าย (ดู guard); ห้ามลบถ้ามีคิว CONFIRMED ตั้งแต่วันนี้; ลบแล้ว: staff status=INACTIVE + detach assignedServices + ลบ tokens + soft delete |
