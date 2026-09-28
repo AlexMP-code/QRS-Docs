@@ -1,7 +1,7 @@
 # คู่มือลำดับการเรียก API ทุก Feature (QRS)
 
-> **อัปเดตเมื่อ:** 2026-09-24
-> **อ้างอิง code:** `31aaeb9` (QRS-QueueReservationSystem, branch master)
+> **อัปเดตเมื่อ:** 2026-09-28
+> **อ้างอิง code:** `06244e6` (QRS-QueueReservationSystem, branch master)
 > **อ้างอิงเอกสาร:** `Roles.md` (สิทธิ์/ขอบเขต) · `openapi.yaml` (schema) · `Feature-First.yaml` (flow ตามหน้าจอ)
 >
 > เอกสารนี้เขียนให้ตรงกับ **พฤติกรรมจริงของ code** — ทุกข้อมูลอ้างอิง `ไฟล์:บรรทัด` เพื่อให้ตรวจสอบย้อนกลับได้
@@ -572,7 +572,8 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 - **`days_mask` bitmask:** bit 0 = จันทร์ … bit 6 = อาทิตย์ (`1 << (day-1)`) — ค่า `127` = เปิดครบ 7 วัน
 - **กันไม่ให้ "ปิดวัน" ที่มีคิว CONFIRMED ในอนาคต** → 422 `"ไม่สามารถลบวันให้บริการได้ เนื่องจากมีคิวที่ยืนยันแล้วในอนาคต กรุณาจัดการคิวก่อน"`
 - ทำใน transaction + `lockForUpdate` + เขียน `AuditLog` (action `SERVICE_TIME_SLOT_DAYS_SYNC`)
-`OperatingDayService.php:105-167` · `StaffServiceController.php:260-299`
+- **ช่วงเวลาที่เลือกต้องเป็นของศูนย์เดียวกับบริการ** → ต่างศูนย์ = 422 `"ช่วงเวลาที่เลือกไม่ได้อยู่ในศูนย์สุขภาพเดียวกับบริการ"` บังคับไว้ 2 ชั้น คือตรวจในโค้ด และ foreign key แบบ composite ในฐานข้อมูล (ตารางเชื่อมมีคอลัมน์ศูนย์ของตัวเอง ต้องตรงกับทั้งบริการและช่วงเวลา) — เดิมไม่เคยตรวจข้อนี้ จึงผูกช่วงเวลาข้ามศูนย์ได้
+`OperatingDayService.php:72-100` · `StaffServiceController.php:260-299`
 
 ---
 
@@ -650,29 +651,34 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 
 ## B6. จัดการช่วงเวลา (Time Slots)
 
-> slot เป็นของ **ศูนย์** — แต่ละศูนย์มีชุด slot ของตัวเอง (unique ต่อ `(health_center_id, start_time, end_time)`)
+> ช่วงเวลาเป็นของ **ศูนย์** เสมอ — คอลัมน์ศูนย์เป็น NOT NULL และ unique ต่อ `(health_center_id, start_time, end_time)`
+> การดูรายชื่อช่วงเวลาเป็น **ศูนย์เดียวต่อหนึ่งคำขอ** ไม่มีการดูข้ามศูนย์ ผู้ดูแลระบบเลือกศูนย์ได้จาก `GET /v1/staff/health-centers`
 
 | Method | Endpoint | Role | หมายเหตุ |
 |---|---|---|---|
-| `GET` | `/v1/staff/admin/time-slots` | HC_ADMIN, SUPER_ADMIN | HC_ADMIN เห็นศูนย์ตัวเอง; SUPER_ADMIN ใส่ `?health_center_id=` ได้ |
-| `PATCH` | `/v1/staff/admin/time-slots/{id}/toggle-status` | HC_ADMIN, SUPER_ADMIN | HC_ADMIN ได้แค่ศูนย์ตัวเอง |
-| `POST` | `/v1/staff/admin/time-slots` | **SUPER_ADMIN เท่านั้น** | |
-| `PUT` | `/v1/staff/admin/time-slots/{id}` | **SUPER_ADMIN เท่านั้น** | |
-| `DELETE` | `/v1/staff/admin/time-slots/{id}` | **SUPER_ADMIN เท่านั้น** | |
+| `GET` | `/v1/staff/admin/time-slots` | HC_ADMIN, SUPER_ADMIN | HC_ADMIN ไม่ต้องส่ง (ได้ศูนย์ตนเอง); SUPER_ADMIN **ต้องส่ง `health_center_id`** (ไม่ส่ง = 422, ไม่มีศูนย์นั้น = 404) |
+| `PATCH` | `/v1/staff/admin/time-slots/{id}/toggle-status` | HC_ADMIN, SUPER_ADMIN | ข้ามศูนย์ไม่ได้ (404) |
+| `POST` | `/v1/staff/admin/time-slots` | **SUPER_ADMIN เท่านั้น** | บังคับ `health_center_id` |
+| `PUT` | `/v1/staff/admin/time-slots/{id}` | **SUPER_ADMIN เท่านั้น** | บังคับ `health_center_id`; slot ต้องเป็นของศูนย์นั้น |
+| `DELETE` | `/v1/staff/admin/time-slots/{id}` | **SUPER_ADMIN เท่านั้น** | **ไม่รองรับ** — 422 ทุกกรณี |
 
 **สร้าง:**
 ```json
-{ "health_center_id": 1, "start_time": "09:00", "end_time": "09:30" }
+{ "health_center_id": 1, "start_time": "09:00", "end_time": "09:30", "is_active": true }
 ```
 - เวลา format `HH:MM`, `end_time` ต้องมากกว่า `start_time`
-- ชนกับช่วงเดิมในศูนย์เดียวกัน → 422 พร้อมข้อความ overlap
-- `label` และ `sort_order` ถูกสร้างอัตโนมัติ
+- **ช่วงเวลาที่ทับกับช่วงเดิมของศูนย์เดียวกัน → 422** `"มีช่วงเวลาที่ทับซ้อนกันอยู่แล้วในศูนย์นี้"` — ตรวจการทับจริง (ไม่ใช่เทียบเวลาให้ตรงกันทุกตัว) ช่วงที่ต่อกันพอดี เช่น 09:00-09:30 กับ 09:30-10:00 ไม่ถือว่าทับ
+- ทับกับช่วงเวลาของศูนย์อื่น → สร้างได้ (แต่ไปผูกกับบริการข้ามศูนย์ไม่ได้ ดู B4/B7.2)
+- `label` และ `sort_order` ถูกสร้างอัตโนมัติ; `is_active` ส่งมาได้ถ้าไม่ส่งค่าเริ่มต้นคือเปิดใช้งาน
 
-**ลบ** → 422 ถ้ามีคิวที่ใช้ช่วงเวลานี้: `"มีคิวที่ใช้ช่วงเวลานี้อยู่..."`
+**การตอบกลับ** — ทุกช่วงเวลาที่คืนมาระบุ `health_center` ของตัวเอง (เฉพาะ endpoint นี้ ที่อื่นที่ฝังช่วงเวลาไว้ เช่น นัดหมายของผู้รับบริการ จะไม่มีข้อมูลนี้)
 
-`StaffTimeSlotController.php:16-114` · `StoreTimeSlotRequest.php:16-19`
+**ลบ** → ไม่รองรับ 422 `"ไม่สามารถลบช่วงเวลาได้ กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน"`
+เหตุผลตาม ADR-0001: ช่วงเวลาถูกนัดหมายและถูกกำหนดวันให้บริการอ้างอิงอยู่ การลบจะทำให้ประวัตินัดหมายหายหรือวันให้บริการหายเงียบ ๆ
 
-> ⚠️ **ข้อยกเว้นที่เป็น bug:** controller นี้ไม่ใช้ `ResolvesHealthCenterScope` — SUPER_ADMIN ไม่ส่ง `health_center_id` จะได้ `null` → สร้าง slot ที่ไม่ผูกศูนย์ได้จริง และ update/destroy ไม่มีขอบเขตศูนย์ (StaffTimeSlotController.php:19, 33, 58, 77, 105)
+**ปิดใช้งานแทน** → เมื่อปิด ช่วงเวลาหายจากผู้รับบริการทันทีทุกบริการของศูนย์ แต่ **วันให้บริการที่ตั้งไว้ยังอยู่ครบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
+
+> ✅ **ข้อยกเว้นที่เคยเป็น bug แก้แล้ว:** controller นี้เคยไม่ใช้ `ResolvesHealthCenterScope` — SUPER_ADMIN ไม่ส่ง `health_center_id` ได้สร้างช่วงเวลาที่ไม่ผูกศูนย่อจริง และแก้/ลบข้ามศูนย์ได้ ตอนนี้ทุก endpoint ใช้ตัวแก้ scope กลางเหมือนที่เหลือ และฐานข้อมูลบังคับศูนย์ไม่ให้ว่างด้วย
 
 ---
 
@@ -728,11 +734,13 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 | field | rule |
 |---|---|
 | `cid` | required, 13 หลัก — ใช้เป็น key หา/สร้างผู้ป่วย (`firstOrCreate`) |
-| `health_center_id` | **required เฉพาะ SUPER_ADMIN** |
+| `health_center_id` | **required เฉพาะ SUPER_ADMIN** — ไม่ส่ง = 422 `"SUPER_ADMIN ต้องระบุ health_center_id"`, ส่งศูนย์ที่ไม่มี = 404; HC_ADMIN ไม่ต้องส่งและถูกบังคับเป็นศูนย์ตนเอง |
 | `service_id` | required — **ต้องเป็นของศูนย์ที่ scope ไว้** |
-| `time_slot_id` | required — ต้องเปิดใน**วันนี้** (ตรวจด้วย `days_mask` ของวันนี้) |
+| `time_slot_id` | required — ต้องเปิดใน**วันนี้** (ตรวจด้วย `days_mask` ของวันนี้) และต้องเป็นของศูนย์เดียวกัน |
 | `staff_id` | optional — บังคับจริงถ้าบริการเปิดเลือกหมอ |
 | `patient_right_id` | optional — ต้องเป็นสิทธิของผู้ป่วยที่ `cid` นั้น |
+
+**ศูนย์ที่ถูกบันทึกมาจากบริการที่เลือกเสมอ** — ไม่ได้มาจากค่าที่ส่งมา ดังนั้นการส่ง `health_center_id` ของศูนย์อื่นโดยผู้ดูแลศูนย์จะไม่ทำให้นัดหมายไปตกศูนย์อื่น แต่จะถูกปฏิเสธเพราะบริการที่เลือกไม่ใช่ของศูนย์นั้น
 
 **`appointment_date` ไม่ต้องส่ง** — ระบบใส่วันนี้ให้อัตโนมัติ
 
@@ -742,9 +750,8 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 - ถ้า `cid` มีอยู่แล้ว → ใช้ผู้ป่วยเดิม (ข้อมูลชื่อ/เบอร์ใหม่จะถูกเมิน)
 - ถ้าไม่ระบุ `patient_right_id` → ใช้สิทธิหลักของผู้ป่วย
 
-`WalkInBookingRequest.php:20-72` · `StaffAppointmentController.php:181-229` · `StaffAppointmentService.php:93-114`
-
-> ข้อความ error ของ booking ถูกกลืนเหมือนกัน — คืน generic `"ไม่สามารถออกคิว Walk-in ได้ กรุณาลองใหม่อีกครั้ง"` (`:221-228`)
+> ข้อความ error ของ **การจอง** ถูกกลืนเหมือนกัน — คืน generic `"ไม่สามารถออกคิว Walk-in ได้ กรุณาลองใหม่อีกครั้ง"`
+> แต่การ **ตรวจข้อมูลก่อนเข้าตัวจอง** ไม่ถูกกลืน — เช่นไม่ระบุศูนย์จะได้ข้อความ `"SUPER_ADMIN ต้องระบุ health_center_id"` ตามปกติ
 
 ### B7.4 ย้ายคิวไปหมอคนอื่น
 
@@ -1090,18 +1097,26 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 
 # Part C — Invariant และข้อจำกัดที่ต้องระวัง
 
-## C.1 ⚠️ Bug ที่มีอยู่จริง: Time Slots ไม่บังคับ `health_center_id`
+## C.1 ✅ แก้แล้ว: Time Slots บังคับ `health_center_id` (เดิมเป็น bug)
 
-**อาการ:** SUPER_ADMIN เรียก `POST /v1/staff/admin/time-slots` โดยไม่ส่ง `health_center_id` → ได้ slot ที่ `health_center_id = null`
+**อาการเดิม:** SUPER_ADMIN เรียกคำสั่งช่วงเวลาโดยไม่ส่ง `health_center_id` → ได้ช่วงเวลาที่ `health_center_id = null` และแก้/ลบข้ามศูนย์ได้
 
-**ทำไม:** `StaffTimeSlotController` ไม่ได้ใช้ trait `ResolvesHealthCenterScope` เลย (เขียน `healthCenterId` เองทุก method)
-ดู `StaffTimeSlotController.php:19, 33, 58, 77, 105` — เทียบกับ controller อื่นที่ใช้ trait
+**สาเหตุ:** `StaffTimeSlotController` ไม่ได้ใช้ trait `ResolvesHealthCenterScope` เขียน `healthCenterId` เองทุก method และ service ใช้ `if ($healthCenterId)` เป็นตัวตัด scope ซึ่งถ้าไม่ส่งค่าจะข้ามการกรองไปทั้งหมด
 
-**ผลกระทบ:**
-- สร้าง time slot ที่ไม่ผูกศูนย์ → slot นี้จะไม่ปรากฏใน dropdown ของศูนย์ไหนเลย
-- update / destroy ไม่มีขอบเขตศูนย์ → SUPER_ADMIN อ้าง id ของ slot ต่างศูนย์ได้
+**สิ่งที่แก้ — บังคับ 3 ชั้น:**
+1. **ชั้นบริการ** — ทุก method รับศูนย์แบบบังคับ (ไม่รับค่าว่าง) ตัดเส้นทาง "ไม่ส่งศูนย์ = ไม่จำกัดศูนย์" ทิ้งทั้งหมด
+2. **ชั้น controller** — ใช้ตัวแก้ scope กลางทุก endpoint (ดู/เพิ่ม/แก้/สลับสถานะ) ผู้ดูแลระบบต้องระบุศูนย์ แตะข้ามศูนย์ไม่ได้
+3. **ชั้นฐานข้อมูล** — คอลัมน์ศูนย์ของช่วงเวลาเป็น NOT NULL
 
-**บันทึกไว้ที่:** `Roles.md` หัวข้อ gap ข้อ 2
+**ผลข้างเคียงที่ต้องรู้:** ระหว่างแก้พบว่า `abort()` ในตัวแก้ scope ถูก `try/catch` กินได้ ทำให้การไม่ระบุศูนย์ตอบ 422 ที่ข้อความว่าง จึงต้องย้ายการเรียกตัวแก้ออกนอก `try` — **จุดเดียวกันนี้ยังไม่ถูกแก้ใน `StaffServiceController::update()` และ `syncStaff()`** (ดูหัวข้อ C.6)
+
+**สิ่งที่เปลี่ยนตามมา:**
+- การลบช่วงเวลาไม่รองรับอีกต่อไป ใช้ปิดใช้งานแทน (ADR-0001) — ดู B6
+- การตรวจช่วงเวลาทับกันเปลี่ยนจาก "เทียบเวลาให้ตรงกันทุกตัว" เป็นการตรวจการทับจริง
+- ตอนสร้างช่วงเวลา ส่ง `is_active: false` ได้ (เดิมไม่ได้ประกาศฟิลด์นี้ ทำให้ค่าถูกตัดทิ้ง)
+- การตอบกลับระบุ `health_center` ของช่วงเวลาทุกรายการ
+
+**บันทึกไว้ที่:** `Roles.md` หัวข้อ gap ข้อ 2 (ปิดแล้ว)
 
 ## C.2 Invariant "คิว CONFIRMED อนาคตกันการเปลี่ยน config"
 
@@ -1164,6 +1179,8 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 | **`service_user` ยังว่างทั้งหมด** | บริการที่ไม่เปิดเลือกหมอ → `isServiceAvailable` คืน `true` เสมอ ให้ความพร้อมถูกคุมด้วย capacity ล้วน |
 | **ไม่มี scheduler/cron** | Auto-close ทำงานต่อเมื่อมี action ต่อคิวเท่านั้น (ดู 0.5) |
 | **เช็คเวลาจริงของ walk-in ใช้ `now()->isoWeekday()`** | ถ้าเปิดใช้งานข้ามเที่ยงคืน คิววันใหม่อาจตรวจ slot ผิดวัน |
+| **`StaffServiceController::update()` และ `syncStaff()` เรียกตัวแก้ scope ภายใน `try/catch (\Exception)`** | `abort()` ถูกกลืน → ไม่ระบุศูนย์จะได้ 422 ที่ข้อความว่าง แทนที่จะได้ข้อความบอกให้ระบุศูนย์ (จุดเดียวกันนี้แก้แล้วใน controller ของช่วงเวลา) |
+| **ตารางเชื่อมบริการ↔ช่วงเวลามีคอลัมน์ศูนย์ที่ต้องเขียนค่าเองทุกจุดเขียน** | ค่าผิดจะถูกฐานข้อมูลปฏิเสธ แต่ถ้าเพิ่มจุดเขียนใหม่ต้องส่งศูนย์มาด้วย ไม่งั้นจะ NOT NULL |
 
 ---
 
@@ -1187,7 +1204,7 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 |---|---|---|
 | `service_staff` | service ↔ staff (หมอที่เลือกได้) | **เลือกหมอ** + กรองความพร้อม |
 | `service_user` | service ↔ user (role STAFF) | **จำกัดว่า STAFF เห็นบริการไหน** |
-| `service_time_slot` | service ↔ time_slot + `days_mask` | **วัน/เวลาที่เปิดให้บริการ** |
+| `service_time_slot` | service ↔ time_slot + `days_mask` + `health_center_id` | **วัน/เวลาที่เปิดให้บริการ** — คอลัมน์ศูนย์ต้องตรงกับทั้งบริการและช่วงเวลา (composite FK) |
 | `user_roles` | user ↔ role | ตรวจสิทธิ์ทุก request |
 | `patients_rights` | patient ↔ right_type | สิทธิการรักษา (มี `is_primary`) |
 
