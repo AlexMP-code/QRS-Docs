@@ -1,7 +1,7 @@
 # สรุปโครงสร้างสิทธิ์และการทำงานของระบบนัดหมายและบริการสุขภาพ
 
 > **อัปเดตเมื่อ:** 2026-09-28
-> **อ้างอิง code:** `06244e6` (QRS-QueueReservationSystem, branch master)
+> **อ้างอิง code:** `3da7dda` (QRS-QueueReservationSystem, branch master)
 >
 > เอกสารนี้เขียนให้ตรงกับ **พฤติกรรมจริงของ code** (รวมถึงจุดที่เป็น gap/bug ในปัจจุบัน) ไม่ใช่เอกสารดีไซน์ในอุดมคติ จุดที่เป็น gap จะระบุด้วยสัญญลักษณ์ ⚠️
 
@@ -19,8 +19,9 @@
 | 4 | *(ไม่มี DB role)* | `role:patient` | Patient | ผู้ป่วย / ผู้รับบริการ |
 
 **หมายเหตุเกี่ยวกับ middleware ที่ตรวจสิทธิ์:**
-- Staff ทุก route ถูกกำกับโดย middleware `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` (alias `role`) ซึ่งตรวจ **DB roles** ผ่าน `User::roles()` relation (`user_roles` pivot) เป็นหลัก — ไม่ได้แยกระดับด้วย token ability
-- middleware `role:` มี fallback ตรวจ token abilities ด้วย แต่ **fallback นี้ใช้งานไม่ได้จริง** ⚠️: token ของ staff ได้ ability `role:staff` (พิมพ์เล็ก) ขณะที่ argument ใน middleware เป็น `STAFF` (พิมพ์ใหญ่) → `in_array()` ไม่ match → การตัดสิทธิ์ขึ้นอยู่กับ DB roles เพียงอย่างเดียว
+- Staff ทุก route ถูกกำกับโดย middleware `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` (alias `role`) ซึ่งตรวจ **DB roles** ผ่าน `User::roles()` relation (`user_roles` pivot) เท่านั้น — token ไม่มีส่วนในการตัดสิทธิ์
+- ✅ เคยมี fallback ตรวจ token abilities แต่ถอดออกแล้ว เพราะตายอยู่: token ของ staff ได้ ability `role:staff` (พิมพ์เล็ก) ขณะที่ argument ใน middleware เป็น `STAFF` (พิมพ์ใหญ่) จึงไม่มีทาง match
+- การถอดบทบาทในฐานข้อมูลมีผลทันที แม้ยังถือ token เดิมอยู่
 - `role:patient` ใช้จริงใน patient routes ผ่าน middleware `abilities:role:patient`
 - หน้าเชิงเทคนิค: `SUPER_ADMIN` ไม่มี bypass ฮาร์ดโค้ดใน middleware — การ "ข้าม" scope เกิดจาก trait `ResolvesHealthCenterScope` ที่ controller ทุกตัวเรียกใช้ร่วมกัน ซึ่งบังคับ `health_center_id` ให้ผู้ดูแลระบบทุกคำสั่งที่ต้องระบุศูนย์
 
@@ -80,7 +81,7 @@
 8. สถานะเริ่มต้น = `CONFIRMED`, `booked_by_type = SELF`; dispatch Discord notification (async)
 
 **ข้อปลีกย่อยที่นักพัฒนาต้องรู้:**
-- ⚠️ **ข้อความ error ของ booking ถูกกลืนหมด** — client เห็นเพียง `422 "ไม่สามารถจองคิวได้ กรุณาลองใหม่อีกครั้ง"` สาเหตุจริง (เช่น "คิวเต็ม", "จองซ้ำ") อยู่ใน server log เท่านั้น
+- ✅ **ข้อความ error ของ booking ถึงผู้รับบริการแล้ว** — เงื่อนไขทางธุรกิจ (คิวเต็ม จองซ้ำ บริการปิด ศูนย์ปิดรับจอง) ตอบข้อความจริงกลับไป; ข้อผิดพลาดที่ไม่คาดคิด (เช่น ฐานข้อมูลล่ม) ตอบ 500 พร้อมข้อความทั่วไปและบันทึกรายละเอียดไว้ใน log เท่านั้น (แก้แล้ว เดิมกลืนทุกข้อความ)
 - ✅ **patient booking เช็ค "staff ทั้งหมดลา" เหมือน walk-in แล้ว** — `BookingService` เรียก `StaffLeave::isServiceAvailable()` ก่อนจอง (แก้ gap #6); ถ้าไม่มี pool (assigned/selectable) ที่กำหนด → ถือว่าเปิดให้บริการ (ให้ capacity/operating-day ตัดสิน)
 - จองซ้ำได้ถ้าคiuก่อนหน้าเป็น CANCELLED/COMPLETED/NO_SHOW (นับเฉพาะ CONFIRMED)
 
@@ -126,7 +127,7 @@
 - SUPER_ADMIN **ข้าม** การตรวจศูนย์ (ไม่ต้องผูก health center, `health_center_id` เป็น null ได้)
 - Token อายุ **24 ชม.** (Sanctum `expiration => 1440`); logout ลบ token; ลบ user → ลบ tokens ทั้งหมด
 
-**⚠️ Throttle staff login (มี bug):** middleware `ThrottleStaffLogin` ตั้งใจลิมิต 5 ครั้ง/30 นาที แต่**นับเฉพาะ status 401/403** ขณะที่ login ผิด (username/password) คืน **422** (ValidationException) → ทุกความพยายามผิด จะไปโดน `RateLimiter::clear()` แทนการ `hit()` → **counter ไม่เคยขึ้น → ลิมิตไม่ทำงานจริงในทางปฏิบัติ** เฉพาะปลายทางที่คืน 401/403 จริงถึงจะนับ
+**Throttle staff login:** middleware `ThrottleStaffLogin` ลิมิต 5 ครั้ง/30 นาที โดยนับทุกความพยายามก่อนถึง controller ไม่ว่าจะผิดหรือถูก และล้างตัวนับเมื่อเข้าระบบสำเร็จ — ✅ แก้แล้ว (เดิมนับเฉพาะ 401/403 ทำให้การเดา password ไม่โดนจำกัด) · ขอบเขตอยู่ที่ username + IP
 
 ### 3.2 Dashboard
 
@@ -299,10 +300,17 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 
 **Transitions ที่ทำได้ (SUPER_ADMIN toggle):** ACTIVE→CLOSING, CLOSING→ACTIVE, INACTIVE→ACTIVE (ไม่มี ACTIVE/CLOSING→INACTIVE ผ่าน endpoint นี้ — INACTIVE เกิดจาก auto-close job เท่านั้น)
 
-**⚠️ Auto-Close (จบตามจริง):**
-- **ไม่มี scheduler/cron** — `CloseHealthCenterJob` ถูก dispatch เมื่อศูนย์อยู่ใน CLOSING และ (1) staff อัปเดตสถานะ appointment เป็น terminal (COMPLETED/CANCELLED/NO_SHOW) หรือ (2) ผู้ป่วยยกเลิกคิวผ่าน `PATCH /v1/patient/appointments/{id}/cancel`
-- Job เช็ค: ศูนย์ยังเป็น CLOSING? มี CONFIRMED appointment เหลืออยู่ไหม? ถ้าไม่มี → เปลี่ยนเป็น INACTIVE + Audit Log `AUTO_CLOSE_HEALTH_CENTER`
-- **⚠️ เช็ค CONFIRMED ไม่กรองวันที่** — คิว CONFIRMED ในอดีต (ที่ยังไม่ถูกเปลี่ยนสถานะ) ก็ถือว่า "ยังค้าง" → บล็อกไม่ให้ศูนย์ปิดได้ ซึ่งอาจเป็น bug
+**Auto-Close (จบตามจริง):**
+- **การปิดศูนย์ยังทำงานต่อเมื่อมี action** — `CloseHealthCenterJob` ถูก dispatch เมื่อศูนย์อยู่ใน CLOSING และ (1) staff อัปเดตสถานะ appointment เป็น terminal (COMPLETED/CANCELLED/NO_SHOW) หรือ (2) ผู้รับบริการยกเลิกนัดหมายผ่าน `PATCH /v1/patient/appointments/{id}/cancel` — ยังไม่มีการรันตามเวลา
+- Job เช็ค: ศูนย์ยังเป็น CLOSING? มี CONFIRMED ของวันนี้หรือวันหน้าเหลือไหม? ถ้าไม่มี → เปลี่ยนเป็น INACTIVE + Audit Log `AUTO_CLOSE_HEALTH_CENTER`
+- ✅ นับเฉพาะนัดหมายวันนี้ขึ้นไป (แก้แล้ว เดิมนับทุกวันที่ ทำให้คิวเก่าบล็อกการปิดศูนย์)
+
+**นัดหมายที่พ้นวัน (ระบบเปลี่ยนเอง):**
+- คำสั่ง `appointments:mark-expired-no-show` รันทุกวัน 00:05 เปลี่ยนนัดหมายที่ยังยืนยันอยู่แต่วันให้บริการผ่านไปแล้ว เป็น "ไม่มาตามนัด" เพราะการที่ยังอยู่ในสถานะยืนยันไม่ได้แปลว่ายังรออยู่จริง
+- ปรับทีละก้อน 500 รายการต่อรอบ
+- บันทึกเวลาที่ระบบเปลี่ยนไว้ใน `appointments.status_auto_changed_at` เพื่อบอกว่าคิวไหนถูกระบบเปลี่ยนเอง (ยกเว้นเจ้าหน้าที่กดเอง ค่านี้จะเป็น null)
+- สถานะอื่นที่เป็นปลายทาง (เสร็จสิ้น/ยกเลิก) ไม่ถูกแตะ
+- "ไม่มาตามนัด" ที่ระบบเปลี่ยนเองแก้กลับเป็น "เสร็จสิ้น" ได้ เพราะเจ้าหน้าที่อาจลืมปิดคิว แต่ถ้าเป็นการกดเองของเจ้าหน้าที่ถือเป็นปลายทางถาวร
 
 ---
 
@@ -452,7 +460,7 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | 2 | ~~`StaffTimeSlotController` ไม่บังคับ `health_center_id`~~ — ✅ **แก้แล้ว**: ทุก endpoint ของช่วงเวลาใช้ตัวแก้ scope กลางแล้ว (SUPER_ADMIN ต้องระบุศูนย์, ข้ามศูนย์ไม่ได้) + คอลัมน์ศูนย์เป็น NOT NULL | fixed | — |
 | 3 | Auto-close เช็ค CONFIRMED โดยไม่กรองวันที่ → คิวเก่าในอดีตบล็อกการปิดศูนย์ | bug | ศูนย์อาจไม่ปิดเป็น INACTIVE |
 | 4 | booking error ทั้งหมด กลืนเป็นข้อความเดียว | design | ผู้ใช้รู้สาเหตุไม่ได้; debug ต้องดู log |
-| 5 | ตัวแก้ scope กลางถูกเรียก **ภายใน `try/catch (\Exception)`** ที่ `StaffServiceController::update()` และ `syncStaff()` → `abort()` ถูกกลืน กลายเป็น 422 ที่ข้อความว่าง | bug | ผู้ใช้ไม่รู้ว่าต้องระบุศูนย์หรือศูนย์ไม่มีอยู่; ช่วงเวลาแก้แล้วโดยย้ายออกนอก try |
+| 5 | ตัวแก้ scope กลางถูกเรียก **ภายใน `try/catch (\Exception)`** ที่ `StaffServiceController::update()` และ `destroy()` → `abort()` ถูกกลืน กลายเป็น 422 ที่ข้อความว่าง | bug | — ✅ **แก้แล้ว**: ย้ายออกนอก try ทั้งสองจุด |
 | 6 | ตั้งวันให้บริการเคยไม่ตรวจว่าช่วงเวลาเป็นของศูนย์เดียวกับบริการ — ✅ **แก้แล้ว**: บังคับในโค้ด (422) และระดับฐานข้อมูล (composite FK) | fixed | — |
 | 7 | patient booking ไม่เช็ค "staff ทั้งหมดลา" (ต่างจาก walk-in) — ✅ **แก้แล้ว**: BookingService เรียก `StaffLeave::isServiceAvailable()` เหมือน walk-in; pool ว่าง → capacity ตัดสิน | fixed | — |
 | 8 | `GET /v1/staff/health-centers` ถ้า call ด้วย Patient token → 500 — ✅ **แก้แล้ว**: route มี `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` แล้ว (รวม `/me`, `PATCH /me`, `/logout` ด้วย) | fixed | — |
