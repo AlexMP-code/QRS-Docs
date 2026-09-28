@@ -1,7 +1,7 @@
 # สรุปโครงสร้างสิทธิ์และการทำงานของระบบนัดหมายและบริการสุขภาพ
 
-> **อัปเดตเมื่อ:** 2026-09-24
-> **อ้างอิง code:** `31aaeb9` (QRS-QueueReservationSystem, branch master)
+> **อัปเดตเมื่อ:** 2026-09-28
+> **อ้างอิง code:** `06244e6` (QRS-QueueReservationSystem, branch master)
 >
 > เอกสารนี้เขียนให้ตรงกับ **พฤติกรรมจริงของ code** (รวมถึงจุดที่เป็น gap/bug ในปัจจุบัน) ไม่ใช่เอกสารดีไซน์ในอุดมคติ จุดที่เป็น gap จะระบุด้วยสัญญลักษณ์ ⚠️
 
@@ -22,7 +22,7 @@
 - Staff ทุก route ถูกกำกับโดย middleware `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` (alias `role`) ซึ่งตรวจ **DB roles** ผ่าน `User::roles()` relation (`user_roles` pivot) เป็นหลัก — ไม่ได้แยกระดับด้วย token ability
 - middleware `role:` มี fallback ตรวจ token abilities ด้วย แต่ **fallback นี้ใช้งานไม่ได้จริง** ⚠️: token ของ staff ได้ ability `role:staff` (พิมพ์เล็ก) ขณะที่ argument ใน middleware เป็น `STAFF` (พิมพ์ใหญ่) → `in_array()` ไม่ match → การตัดสิทธิ์ขึ้นอยู่กับ DB roles เพียงอย่างเดียว
 - `role:patient` ใช้จริงใน patient routes ผ่าน middleware `abilities:role:patient`
-- หน้าเชิงเทคนิค: `SUPER_ADMIN` ไม่มี bypass ฮาร์ดโค้ดใน middleware — การ "ข้าม" scope เกิดจากการที่ controller ตรวจ `hasRole('SUPER_ADMIN')` แล้วไม่บังคับ health_center_id ของตัวเอง
+- หน้าเชิงเทคนิค: `SUPER_ADMIN` ไม่มี bypass ฮาร์ดโค้ดใน middleware — การ "ข้าม" scope เกิดจาก trait `ResolvesHealthCenterScope` ที่ controller ทุกตัวเรียกใช้ร่วมกัน ซึ่งบังคับ `health_center_id` ให้ผู้ดูแลระบบทุกคำสั่งที่ต้องระบุศูนย์
 
 ---
 
@@ -240,10 +240,14 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
-| `GET` | `/v1/staff/admin/time-slots` | ดู slot — HC_ADMIN เฉพาะศูนย์ตัวเอง; SUPER_ADMIN ทุกศูนย์ (หรือกำหนด `health_center_id`) |
-| `PATCH` | `/v1/staff/admin/time-slots/{id}/toggle-status` | เปิด/ปิด slot — **HC_ADMIN เฉพาะของศูนย์ตัวเอง; SUPER_ADMIN ข้ามศูนย์ได้** |
+| `GET` | `/v1/staff/admin/time-slots` | ดู slot ของ **ศูนย์เดียว** — HC_ADMIN ไม่ต้องระบุ (ได้ศูนย์ตนเอง); SUPER_ADMIN **ต้องระบุ `health_center_id`** (ไม่ส่ง = 422, ศูนย์ไม่มี = 404); ทุก slot ที่คืนมาระบุศูนย์ของตัวเอง |
+| `PATCH` | `/v1/staff/admin/time-slots/{id}/toggle-status` | เปิด/ปิด slot — **HC_ADMIN เฉพาะของศูนย์ตัวเอง; SUPER_ADMIN ต้องระบุ `health_center_id` และแตะข้ามศูนย์ไม่ได้ (404)** |
 
-**หมายเหตุ:** HC Admin เปิด/ปิดได้เฉพาะ slot ศูนย์ตัวเอง แต่ **Create/Update/Delete = SUPER_ADMIN only**; slot แต่ละตัวเป็นของศูนย์ (`health_center_id` FK + unique `(health_center_id, start_time, end_time)`)
+**หมายเหตุ:**
+- **ไม่มีการลบช่วงเวลา** — คำสั่งลบถูกเก็บไว้แต่ตอบ 422 พร้อมชี้ว่าให้ปิดใช้งานแทน (เฉพาะช่วงเวลาเท่านั้น บริการ/เจ้าหน้าที่ยังลบได้)
+- เมื่อปิดใช้งาน วันให้บริการที่ตั้งไว้กับช่วงเวลานั้น **ไม่ถูกลบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
+- Create/Update = SUPER_ADMIN only; slot แต่ละตัวเป็นของศูนย์ (`health_center_id` **NOT NULL** + unique `(health_center_id, start_time, end_time)`)
+- ช่วงเวลาใหม่ที่ทับกับช่วงเวลาเดิมของศูนย์เดียวกันถูกปฏิเสธจริง (ช่วงที่ต่อกันพอดีไม่ถือว่าทับ)
 
 ### 4.4 การจัดการข้อมูล รพ.สต.
 
@@ -261,8 +265,9 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 
 - ดู Dashboard / บริการ / นัด / roster / leaves / ผู้ป่วย / health-centers แบบ**ทุกศูนย์** (ไม่ระบุ `health_center_id` = รวมทุกศูนย์)
 - **กฎหลัก:** ทุกรายการ write เฉพาะเจาะจง (service, patient, health-center, user, discord) ต้องระบุ `health_center_id` ใน request → ไม่ส่ง = **422** "SUPER_ADMIN ต้องระบุ health_center_id"; ส่งแล้วไม่มีศูนย์นั้น = 404
-- **⚠️ ข้อยกเว้น (deviation):** `StaffTimeSlotController` (index/store/update/destroy/toggle-status time-slots) **ไม่บังคับ `health_center_id`** — ไม่ส่งจะได้ `healthCenterId = null` → สร้าง slot แบบ center-less ได้จริง และ update/destroy ไร้ขอบเขตศูนย์ (ต่างจาก pattern ของ trait `ResolvesHealthCenterScope` ที่ controller อื่นใช้ร่วมกัน) — น่าจะเป็น bug
+- **ทุก endpoint ที่ต้องระบุศูนย์ใช้เกณฑ์เดียวกัน** แล้ว (รวม walk-in, Discord, ช่วงเวลา, วันให้บริการ) — เคยมีจุดที่เขียนตรรกะตรวจศูนย่อเองจนตอบกลับต่างจากกัน แก้แล้ว
 - **⚠️ ข้อยกเว้น:** `POST /admin/users` ให้ SUPER_ADMIN สร้าง user แบบ center null ได้
+- **หมายเหตุ:** ผู้ดูแลระบบเลือกศูนย์ที่จะดูรายชื่อช่วงเวลาได้จาก `GET /v1/staff/health-centers` การดูช่วงเวลาข้ามศูนย์ในคำขอเดียวไม่มีแล้ว
 
 ### 5.2 Super Admin Only Endpoints
 
@@ -271,9 +276,9 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | `PATCH` | `/v1/staff/discord/webhook` | ตั้งค่า/ยกเลิก Discord Webhook (ส่ง null = ลบ) — **บังคับ `health_center_id` (422/404)**; regex URL `https://discord.com/api/webhooks/{id}/{token}` |
 | `PATCH` | `/v1/staff/admin/health-centers/{id}/toggle-status` | สลับสถานะศูนย์ — ACTIVE↔CLOSING, INACTIVE→ACTIVE; **ต้องระบุ `health_center_id` ตรงกับ path {id}**; มี `lockForUpdate` + Audit Log |
 | `GET` | `/v1/staff/admin/health-centers` | ทุกศูนย์ ทุก status พร้อม filter (q/code/province/district/status) + paginate |
-| `POST` | `/v1/staff/admin/time-slots` | เพิ่ม slot — SUPER_ADMIN only; ⚠️ ไม่ส่ง `health_center_id` → สร้าง center-less ได้ |
-| `PUT` | `/v1/staff/admin/time-slots/{id}` | แก้ slot — SUPER_ADMIN only; ⚠️ ไม่ส่ง center → แก้ได้ข้ามศูนย์ |
-| `DELETE` | `/v1/staff/admin/time-slots/{id}` | ลบ slot — SUPER_ADMIN only; **⚠️ บล็อกถ้ามี appointment ใดๆ ที่ใช้ slot นี้ (ทุกวัน ทุกสถานะ)** — ไม่ใช่แค่ CONFIRMED อนาคต; error กลับ message เจาะจง "ไม่สามารถลบช่วงเวลาได้ เนื่องจากมีคิวที่ใช้ช่วงเวลานี้อยู่ กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน" 422 |
+| `POST` | `/v1/staff/admin/time-slots` | เพิ่ม slot — SUPER_ADMIN only; **บังคับ `health_center_id` (422/404)**; ปฏิเสธถ้าทับกับช่วงเวลาเดิมของศูนย์นั้น |
+| `PUT` | `/v1/staff/admin/time-slots/{id}` | แก้ slot — SUPER_ADMIN only; **บังคับ `health_center_id`; slot ต้องเป็นของศูนย์นั้น (ต่าง = 404)**; ส่ง `is_active: false` ตอนสร้างได้ |
+| `DELETE` | `/v1/staff/admin/time-slots/{id}` | **ไม่รองรับการลบช่วงเวลา** — ตอบ 422 ทุกกรณี (ไม่ว่าจะมีนัดหมายหรือไม่) พร้อมชี้ทางเลือก "กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน" |
 
 ### 5.3 Cross-Center Operations (ใช้ endpoint เดียวกับ HC Admin แต่ scope ข้ามศูนย์)
 
@@ -281,7 +286,7 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 |---|---|---|
 | แก้ไขข้อมูลผู้ป่วย | `PATCH /v1/staff/patients/{id}` | ต้องระบุ `health_center_id`; ผู้ป่วยต้องมีประวัติคิวที่ศูนย์นั้น |
 | ผูกหมอเข้ากับบริการ | `PUT /v1/staff/services/{id}/staff` | ต้องระบุ `health_center_id`; หมอต้องในศูนย์เดียวกันและหมวดหมู่เดียวกับบริการ |
-| ตั้งค่าวันเปิดให้บริการ | `PUT /v1/staff/services/{id}/time-slot-days` | ต้องระบุ `health_center_id` |
+| ตั้งค่าวันเปิดให้บริการ | `PUT /v1/staff/services/{id}/time-slot-days` | ต้องระบุ `health_center_id`; **ช่วงเวลาที่เลือกต้องเป็นของศูนย์เดียวกับบริการ (ต่าง = 422)** — บังคับทั้งในโค้ดและระดับฐานข้อมูล |
 | แก้ไขข้อมูล รพ.สต. | `PATCH /v1/staff/health-centers/{id}` | แก้ได้ทุกฟิลด์ **รวมถึง `code`**; `health_center_id` ต้องตรงกับ `{id}` |
 
 ### 5.4 สถานะ 3 ระดับของศูนย์สุขภาพ (Open/Close Lifecycle)
@@ -323,9 +328,10 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | **Leave: ลงวันลา** | ตัวเองเท่านั้น | ใครก็ได้ในศูนย์ | ใครก็ได้ | — |
 | **Leave: ลบวันลา** | ตัวเองเท่านั้น | ในศูนย์ตัวเอง | ทุกที่ | — |
 | **User Management** | — | ✔ (STAFF only, ศูนย์ตัวเอง) | ✔ ทุก role | — |
-| **Time Slots: ดูรายการ** | — | ✔ (ศูนย์ตัวเอง) | ✔ (ทุกศูนย์) | — |
-| **Time Slots: Toggle Status** | — | ✔ (ศูนย์ตัวเอง) | ✔ (ทุกศูนย์) | — |
-| **Time Slots: CRUD (เพิ่ม/แก้ไข/ลบ)** | — | — | ✔ (ทุกศูนย์) | — |
+| **Time Slots: ดูรายการ** | — | ✔ (ศูนย์ตัวเอง) | ✔ (ต้องระบุศูนย์) | — |
+| **Time Slots: Toggle Status** | — | ✔ (ศูนย์ตัวเอง) | ✔ (ต้องระบุศูนย์) | — |
+| **Time Slots: เพิ่ม/แก้ไข** | — | — | ✔ (ต้องระบุศูนย์) | — |
+| **Time Slots: ลบ** | — | — | — ไม่รองรับ ใช้ปิดใช้งานแทน | — |
 | **Health Centers: แก้ไขข้อมูล** | — | ศูนย์ตัวเอง (ห้ามแก้ code) | ทุกศูนย์ (แก้ code ได้) | — |
 | **Health Centers: Toggle Status** | — | — | ✔ | — |
 | **Discord Webhook** | — | — | ✔ | — |
@@ -337,11 +343,11 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | # | กลไก | layer ที่ enforce | หมายเหตุ |
 |---|---|---|---|
 | 1 | **Data Privacy (PDPA)** — ข้อมูลผู้ป่วย mask เป็นค่าเริ่มต้น; Unmask/แก้ไขบันทึก Audit Log | Resource/accessor + Controller/Service | ดูตาราง Audit Log ด้านล่าง — **ไม่ใช่ทุก action ที่ mask** |
-| 2 | **Strict Multi-Tenancy** — staff จัดการเฉพาะศูนย์ตัวเอง | Trait `ResolvesHealthCenterScope` + Service `where(health_center_id)->findOrFail()` | SUPER_ADMIN ระบุ center; **ข้อยกเว้น time-slots (วางอาจผิด)** |
+| 2 | **Strict Multi-Tenancy** — staff จัดการเฉพาะศูนย์ตัวเอง | Trait `ResolvesHealthCenterScope` (ทุก endpoint) + Service `where(health_center_id)->findOrFail()` + DB `NOT NULL` | SUPER_ADMIN ต้องระบุศูนย์เสมอ — เคยมีข้อยกเว้นที่ช่วงเวลา แก้แล้ว |
 | 3 | **Assigned Services scope** — STAFF เห็นนัด/Walk-in เฉพาะบริการที่ assign | Controller (index/walkInBooking) | updateStatus/reassign/unmask ไม่จำกัด assigned |
-| 4 | **Operating Days Hard Gate** — แต่ละ (service,slot) มี `days_mask` (bit 1-7) | Request validation (book/walk-in) + `OperatingDayService::isSlotAvailableOnDate` | pivot `service_time_slot`; slot ต้อง active |
+| 4 | **Operating Days Hard Gate** — แต่ละ (service,slot) มี `days_mask` (bit 1-7) | Request validation (book/walk-in) + `OperatingDayService::isSlotAvailableOnDate` | pivot `service_time_slot`; slot ต้อง active; **slot ต้องเป็นของศูนย์เดียวกับบริการ (บังคับทั้งโค้ดและ composite FK)** |
 | 5 | **Capacity & anti-overbooking** — นับ CONFIRMED ลดจาก quota; staff-selection 1 คิว/รอบ/คน | `CapacityService` + `lockForUpdate` ใน transaction | ยังมีจุด: ข้อความ booking กลืน 422, แสดงผล snapshot ไม่ lock |
-| 6 | **Confirmed-queue guards** — ห้ามลบ/ปิดสิ่งที่กำลังมีคิว (services, staff, time-slot-days, user, leave, duty) | Service + Controller | เว้น DELETE time-slot ที่ block **ทุก** appointment |
+| 6 | **Confirmed-queue guards** — ห้ามลบ/ปิดสิ่งที่กำลังมีคิว (services, staff, time-slot-days, user, leave, duty) | Service + Controller | **ช่วงเวลาไม่ลบเลย** ตาม ADR-0001 ใช้ปิดใช้งานแทน; การลบศูนย์/บริการ/ช่วงเวลาที่มีนัดหมายจะถูก FK `RESTRICT` บล็อก |
 | 7 | **Health Center Lifecycle** — ACTIVE/CLOSING/INACTIVE + auto-close job | Service (SUPER_ADMIN toggle) + `CloseHealthCenterJob` | auto-close เช็ค CONFIRMED ไม่กรองวันที่ (อาจ bug) |
 | 8 | **Staff Selection** — `allow_staff_selection=true` บังคับ PER_MASSEUSE + selectable staff ≥1; ป้องกันการแกะหมอที่มีคิว | Service `update` + `syncStaff` | เปิด/ปิด + ผูกหมอต้องระดับ admin |
 | 9 | **Last Super Admin Guard** — ห้ามลบ/ปิด SUPER_ADMIN คนสุดท้ายที่ ACTIVE | `StaffUserManagementController` + `isLastActiveSuperAdmin` | |
@@ -443,10 +449,11 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | # | จุด | ประเภท | ผลกระทบ |
 |---|---|---|---|
 | 1 | staff login throttle นับเฉพาะ 401/403 → login ผิด (422) ไม่ทำให้ลิมิตทำงาน | bug | ไม่มีป้องกัน brute-force staff login |
-| 2 | `StaffTimeSlotController` ไม่บังคับ `health_center_id` → SUPER_ADMIN สร้าง slot center-less / แก้ข้ามศูนย์ได้ | gap/consistency | ละเมิดกฎ cross-tenant; ข้อมูลไม่ผูกศูนย์ |
+| 2 | ~~`StaffTimeSlotController` ไม่บังคับ `health_center_id`~~ — ✅ **แก้แล้ว**: ทุก endpoint ของช่วงเวลาใช้ตัวแก้ scope กลางแล้ว (SUPER_ADMIN ต้องระบุศูนย์, ข้ามศูนย์ไม่ได้) + คอลัมน์ศูนย์เป็น NOT NULL | fixed | — |
 | 3 | Auto-close เช็ค CONFIRMED โดยไม่กรองวันที่ → คิวเก่าในอดีตบล็อกการปิดศูนย์ | bug | ศูนย์อาจไม่ปิดเป็น INACTIVE |
 | 4 | booking error ทั้งหมด กลืนเป็นข้อความเดียว | design | ผู้ใช้รู้สาเหตุไม่ได้; debug ต้องดู log |
-| 5 | DELETE time-slot บล็อก**ทุก** appointment (ทุกวันที่/สถานะ) แม้จะตั้งใจจะบล็อกเฉพาะคิวล่วงหน้า | bug | ลบ slot เก่าไม่ได้ |
-| 6 | patient booking ไม่เช็ค "staff ทั้งหมดลา" (ต่างจาก walk-in) — ✅ **แก้แล้ว**: BookingService เรียก `StaffLeave::isServiceAvailable()` เหมือน walk-in; pool ว่าง → capacity ตัดสิน | fixed | — |
-| 7 | `GET /v1/staff/health-centers` ถ้า call ด้วย Patient token → 500 — ✅ **แก้แล้ว**: route มี `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` แล้ว (รวม `/me`, `PATCH /me`, `/logout` ด้วย) | fixed | — |
-| 8 | role middleware fallback token ability dead (`role:staff` vs `STAFF`) | dead code | สร้างความเข้าใจผิด; ควรลบ fallback หรือแก้ case |
+| 5 | ตัวแก้ scope กลางถูกเรียก **ภายใน `try/catch (\Exception)`** ที่ `StaffServiceController::update()` และ `syncStaff()` → `abort()` ถูกกลืน กลายเป็น 422 ที่ข้อความว่าง | bug | ผู้ใช้ไม่รู้ว่าต้องระบุศูนย์หรือศูนย์ไม่มีอยู่; ช่วงเวลาแก้แล้วโดยย้ายออกนอก try |
+| 6 | ตั้งวันให้บริการเคยไม่ตรวจว่าช่วงเวลาเป็นของศูนย์เดียวกับบริการ — ✅ **แก้แล้ว**: บังคับในโค้ด (422) และระดับฐานข้อมูล (composite FK) | fixed | — |
+| 7 | patient booking ไม่เช็ค "staff ทั้งหมดลา" (ต่างจาก walk-in) — ✅ **แก้แล้ว**: BookingService เรียก `StaffLeave::isServiceAvailable()` เหมือน walk-in; pool ว่าง → capacity ตัดสิน | fixed | — |
+| 8 | `GET /v1/staff/health-centers` ถ้า call ด้วย Patient token → 500 — ✅ **แก้แล้ว**: route มี `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` แล้ว (รวม `/me`, `PATCH /me`, `/logout` ด้วย) | fixed | — |
+| 9 | role middleware fallback token ability dead (`role:staff` vs `STAFF`) | dead code | สร้างความเข้าใจผิด; ควรลบ fallback หรือแก้ case |

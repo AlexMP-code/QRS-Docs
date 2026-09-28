@@ -1295,6 +1295,10 @@ paths:
         - บริการ/ช่วงเวลาจะถูกใช้จอง ดู Available Slots และ Walk-in ได้เฉพาะในวันที่เปิดให้บริการเท่านั้น
         - ต้องเหลืออย่างน้อย 1 (ช่วงเวลา, วัน) ที่เปิดให้บริการ (ปฏิเสธ 422 ถ้าทิ้งว่าง)
         - ไม่สามารถลบ (ช่วงเวลา, วัน) ที่มีนัด CONFIRMED ในอนาคตค้างอยู่ได้ (422)
+        - **ช่วงเวลาที่เลือกต้องเป็นของศูนย์เดียวกับบริการ** → ต่างศูนย์ = 422
+          `"ช่วงเวลาที่เลือกไม่ได้อยู่ในศูนย์สุขภาพเดียวกับบริการ"`
+          บังคับไว้ 2 ชั้น คือตรวจในโค้ด และ foreign key แบบ composite ในฐานข้อมูล
+          (เดิมไม่เคยตรวจข้อนี้ จึงผูกช่วงเวลาข้ามศูนย์ได้)
         - ทุกการตั้งค่าถูกบันทึก Audit Log (SERVICE_TIME_SLOT_DAYS_SYNC)
       operationId: staffSyncServiceTimeSlotDays
       requestBody:
@@ -1978,17 +1982,17 @@ paths:
   /v1/staff/admin/time-slots:
     get:
       tags: [HEALTH_CENTER_ADMIN]
-      summary: รายการช่วงเวลาของศูนย์ (หรือทุกศูนย์สำหรับ Super Admin)
+      summary: รายการช่วงเวลาของศูนย์เดียว
       description: |
-        ดึงรายการ time slots ของศูนย์ (เรียงตาม sort_order)
-        - HC_ADMIN: เฉพาะศูนย์ของตนเอง
-        - SUPER_ADMIN: ทุกศูนย์ (หรือกรองด้วย ?health_center_id=)
+        ดึงรายการ time slots ของศูนย์ **หนึ่งศูนย์** (เรียงตามเวลาเริ่ม)
+        - HC_ADMIN: เฉพาะศูนย์ของตนเอง ไม่ต้องส่ง health_center_id
+        - SUPER_ADMIN: **ต้องระบุ health_center_id** — ไม่ส่ง = 422 "SUPER_ADMIN ต้องระบุ health_center_id", ศูนย์ไม่มีอยู่ = 404
+        - ไม่มีการดูข้ามศูนย์ในคำขอเดียว — ผู้ดูแลระบบเลือกศูนย์จาก `GET /v1/staff/health-centers`
         - เฉพาะ SUPER_ADMIN / HEALTH_CENTER_ADMIN เท่านั้น (STAFF เข้าไม่ได้ — 403)
-        - items = TimeSlotResource: id, label, start_time, end_time, sort_order, is_active (resource ไม่คืน health_center_id)
-        - หมายเหตุ: จำนวนคิวล่วงหน้า (future_appointments_count) ไม่ถูกส่งกลับใน response
+        - ทุกรายการมี `health_center` ของตัวเอง (เฉพาะ endpoint นี้ — ที่อื่นที่ฝัง time_slot เช่น นัดหมายของผู้รับบริการ จะไม่มี field นี้)
       operationId: staffListTimeSlots
       parameters:
-        - $ref: "#/components/parameters/HealthCenterIdFilter"
+        - $ref: "#/components/parameters/HealthCenterIdRequired"
       responses:
         "200":
           description: OK
@@ -2003,6 +2007,10 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/TimeSlotResource"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -2010,10 +2018,11 @@ paths:
       tags: [SUPER_ADMIN]
       summary: เพิ่มช่วงเวลาใหม่
       description: |
-        เพิ่ม time slot ใหม่ให้ศูนย์สุขภาพ (label และ sort_order คำนวณอัตโนมัติจาก start_time/end_time)
-        - SUPER_ADMIN เท่านั้น (ควรระบุ health_center_id)
-        - ห้าม start_time/end_time ทับซ้อนกับ slot ที่มีอยู่แล้วในศูนย์เดียวกัน
-        - ⚠️ BUG: code ใช้ `$request->input('health_center_id')` ตรง ๆ ไม่ validate/บังคับ — ถ้าไม่ส่งจะสร้าง slot ที่ health_center_id = null (center-less slot) ได้
+        เพิ่ม time slot ให้ศูนย์สุขภาพ (label และ sort_order คำนวณอัตโนมัติจาก start_time/end_time)
+        - SUPER_ADMIN เท่านั้น
+        - **ต้องระบุ health_center_id** — ไม่ส่ง = 422, ศูนย์ไม่มีอยู่ = 404
+        - ห้าม start_time/end_time **ทับซ้อน** กับ slot ที่มีอยู่แล้วในศูนย์เดียวกัน (ตรวจการทับจริง — ช่วงที่ต่อกันพอดีเช่น 09:00-09:30 กับ 09:30-10:00 ไม่ถือว่าทับ; ทับกับ slot ของศูนย์อื่นได้)
+        - ส่ง `is_active: false` เพื่อสร้างช่วงเวลาที่ปิดใช้งานตั้งแต่แรก (ไม่ส่ง = เปิดใช้งาน)
       operationId: staffCreateTimeSlot
       requestBody:
         required: true
@@ -2055,8 +2064,10 @@ paths:
       summary: แก้ไขช่วงเวลา
       description: |
         แก้ไข time slot (start_time, end_time, is_active)
+        - SUPER_ADMIN เท่านั้น
+        - **ต้องระบุ health_center_id และ slot ต้องเป็นของศูนย์นั้น** — ไม่ส่ง = 422, ศูนย์ไม่มี = 404, slot ของศูนย์อื่น = 404
         - label และ sort_order จะถูกคำนวณใหม่ถ้าแก้ start/end time
-        - ห้าม start_time/end_time ทับซ้อนกับ slot อื่น
+        - ห้ามแก้ให้ **ทับซ้อน** กับ slot อื่นของศูนย์เดียวกัน (ตรวจการทับจริง) — แก้เป็นเวลาเดิมของตัวเองได้
       operationId: staffUpdateTimeSlot
       requestBody:
         required: true
@@ -2079,6 +2090,12 @@ paths:
                         example: "แก้ไขช่วงเวลาสำเร็จ"
                       data:
                         $ref: "#/components/schemas/TimeSlotResource"
+        "404":
+          description: ไม่พบช่วงเวลาของศูนย์ที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -2086,32 +2103,26 @@ paths:
 
     delete:
       tags: [SUPER_ADMIN]
-      summary: ลบช่วงเวลา
+      summary: ลบช่วงเวลา (ไม่รองรับ — ใช้ปิดใช้งานแทน)
       description: |
-        ลบ time slot แบบถาวร (Hard Delete)
-        - ห้ามลบถ้ามีคิว (appointment) อ้างอิงช่วงเวลานี้อยู่ — ทุกสถานะและทุกวัน รวมคิวที่ผ่านไปแล้ว (422)
-          วิธีที่แนะนำคือ เปิด/ปิด (toggle-status) แทน
-        - pivot service_time_slot จะถูกลบอัตโนมัติ (cascade)
+        **ไม่รองรับการลบช่วงเวลา** — endpoint นี้เก็บไว้เพื่อให้ client ที่ยังเรียกอยู่ได้รับคำแนะนำที่แก้ตามได้ แทนที่จะเจอ 405
+        - ตอบ 422 **ทุกกรณี** ไม่ว่าจะมีนัดหมายอ้างอิงหรือไม่
+        - เหตุผล: ช่วงเวลาถูกนัดหมายและถูกกำหนดวันให้บริการอ้างอิงอยู่ การลบจะทำให้ประวัตินัดหมายหาย หรือทำให้วันให้บริการหายโดยไม่เตือน (ADR-0001)
+        - **วิธีที่ถูกต้อง: เรียก `PATCH /v1/staff/admin/time-slots/{id}/toggle-status`** — เมื่อปิด ช่วงเวลาจะหายจากผู้รับบริการทันที แต่วันให้บริการที่ตั้งไว้ยังอยู่ครบ และกลับมาใช้ทันทีเมื่อเปิดคืน
       operationId: staffDeleteTimeSlot
       responses:
-        "200":
-          description: OK
+        "422":
+          description: "ไม่รองรับการลบช่วงเวลา — กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน"
           content:
             application/json:
               schema:
                 allOf:
-                  - $ref: "#/components/schemas/SuccessResponse"
+                  - $ref: "#/components/schemas/ErrorResponse"
                   - type: object
                     properties:
                       message:
                         type: string
-                        example: "ลบช่วงเวลาเรียบร้อยแล้ว"
-        "422":
-          description: "ไม่สามารถลบได้ เนื่องจากมีคิวที่ใช้ช่วงเวลานี้อยู่ (ทุกสถานะ รวมคิวที่ผ่านไปแล้ว)"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                        example: "ไม่สามารถลบช่วงเวลาได้ กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -2129,9 +2140,9 @@ paths:
       summary: เปิด/ปิดสถานะช่วงเวลา
       description: |
         สลับ is_active ของ time slot (true ↔ false)
-        - ใช้ปิด slot แทนการลบ เมื่อมีคิวใช้ช่วงเวลาอยู่
-        - HC_ADMIN: เฉพาะศูนย์ของตนเอง
-        - ⚠️ SUPER_ADMIN: แม้ description เดิมจะบอก "ต้องระบุ health_center_id ให้ตรงกับศูนย์ของ slot" แต่ code ใช้ `$request->input('health_center_id')` ไม่ validate — ถ้าไม่ส่งจะกรองด้วย id อย่างเดียว (ข้ามศูนย์ได้)
+        - **นี่คือวิธีที่ถูกต้องแทนการลบช่วงเวลา** — เมื่อปิด ช่วงเวลาจะหายจากผู้รับบริการทันทีทุกบริการของศูนย์ แต่วันให้บริการที่ตั้งไว้กับช่วงเวลานี้ **ไม่ถูกลบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
+        - HC_ADMIN: เฉพาะศูนย์ของตนเอง (ข้ามศูนย์ไม่ได้ — 404)
+        - SUPER_ADMIN: **ต้องระบุ health_center_id** — ไม่ส่ง = 422, ศูนย์ไม่มี = 404, slot ของศูนย์อื่น = 404
       operationId: staffToggleTimeSlotStatus
       requestBody:
         content:
@@ -2178,6 +2189,11 @@ paths:
         - booked_by_type = STAFF เสมอสำหรับ walk-in
         - STAFF (ไม่มี role บริหาร): ออกคิวได้เฉพาะ Services ที่ได้รับมอบหมาย — ไม่ได้รับมอบหมาย → 403 "ไม่ได้รับมอบหมายให้ให้บริการนี้"
         - SUPER_ADMIN: ต้องระบุ health_center_id ใน body (ข้ามศูนย์)
+          ไม่ส่ง → 422 `{"success": false, "message": "SUPER_ADMIN ต้องระบุ health_center_id"}`
+          ส่งศูนย์ที่ไม่มีอยู่ → 404 `{"success": false, "message": "ไม่พบข้อมูลรพ.สต. ที่ระบุ"}`
+        - HEALTH_CENTER_ADMIN: ไม่ต้องส่ง และถูกบังคับให้เป็นศูนย์ตนเอง
+          (การส่ง `health_center_id` ของศูนย์อื่นไม่ทำให้นัดหมายไปตกศูนย์อื่น เพราะศูนย์ที่บันทึกมาจากบริการที่เลือก)
+        - **ศูนย์ที่บันทึกในนัดหมายมาจากบริการที่เลือกเสมอ** ไม่ได้มาจากค่าใน body
       operationId: staffWalkInBooking
       requestBody:
         required: true
@@ -2215,11 +2231,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: ไม่พบศูนย์สุขภาพที่ระบุ (SUPER_ADMIN ส่ง health_center_id ที่ไม่มีอยู่)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
-          $ref: "#/components/responses/ValidationError"
+          description: |
+            ข้อมูลไม่ผ่านการตรวจ หรือเงื่อนไขการออกคิวไม่ผ่าน
+            หมายเหตุ: ไม่ระบุ `health_center_id` จะได้ข้อความ `{"success": false, "message": "SUPER_ADMIN ต้องระบุ health_center_id"}`
+            ไม่ใช่รูปแบบ validation error — เพราะถูกตรวจที่ชั้นการระบุศูนย์ก่อนตรวจข้อมูล
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  # ══════════════════════════════════════════════════════════
+  #  PATIENT — จอง / ดูคิว
   # ══════════════════════════════════════════════════════════
   #  PATIENT — ผู้รับบริการ
   # ══════════════════════════════════════════════════════════
@@ -2414,6 +2445,16 @@ components:
       schema:
         type: integer
       description: กรองตาม รพ.สต. (SUPER_ADMIN เท่านั้น — role อื่นถูกจำกัดที่ รพ.สต. ของตัวเองโดยอัตโนมัติ)
+    HealthCenterIdRequired:
+      name: health_center_id
+      in: query
+      required: false
+      schema:
+        type: integer
+      description: |
+        ศูนย์เป้าหมายของคำสั่งนี้
+        - SUPER_ADMIN: **ต้องระบุ** — ไม่ส่ง = 422, ศูนย์ไม่มีอยู่ = 404
+        - HEALTH_CENTER_ADMIN: ไม่ต้องส่ง และค่าที่ส่งมาจะถูกบังคับเป็นศูนย์ตนเอง
 
   responses:
     Unauthorized:
@@ -3044,6 +3085,12 @@ components:
         is_active:
           type: boolean
           description: สถานะเปิด/ปิดใช้งานช่วงเวลานี้
+        health_center:
+          allOf:
+            - $ref: "#/components/schemas/HealthCenter"
+          description: |
+            ศูนย์เจ้าของช่วงเวลา — คืนเฉพาะ endpoint รายการช่วงเวลาของผู้ดูแล เท่านั้น
+            ที่อื่นที่ฝัง time_slot (เช่น นัดหมายของผู้รับบริการ) จะไม่มี field นี้
 
     ServiceTimeSlotHours:
       type: object
@@ -3712,11 +3759,11 @@ components:
 
     StoreTimeSlotRequest:
       type: object
-      required: [start_time, end_time]
+      required: [health_center_id, start_time, end_time]
       properties:
         health_center_id:
           type: integer
-          description: ID ของศูนย์ (ควรระบุเสมอ) — ⚠️ code ไม่บังคับ (ดูหมายเหตุ bug ของ endpoint)
+          description: ศูนย์เป้าหมาย — จำเป็น (SUPER_ADMIN เท่านั้น) ไม่ส่ง = 422, ศูนย์ไม่มีอยู่ = 404
         start_time:
           type: string
           description: เวลาเริ่มต้น (HH:MM)
@@ -3725,13 +3772,17 @@ components:
           type: string
           description: เวลาสิ้นสุด (HH:MM, ต้องมากกว่า start_time)
           example: "10:00"
+        is_active:
+          type: boolean
+          description: สร้างแล้วเปิดใช้หรือปิดใช้ทันที (ไม่ส่ง = เปิดใช้)
 
     UpdateTimeSlotRequest:
       type: object
+      required: [health_center_id]
       properties:
         health_center_id:
           type: integer
-          description: "SUPER_ADMIN: ควรระบุเพื่อจำกัดขอบเขตศูนย์ — ⚠️ code ไม่บังคับ (ถ้าไม่ส่งอาจแก้ slot ข้ามศูนย์ได้)"
+          description: "ศูนย์เจ้าของช่วงเวลา (SUPER_ADMIN เท่านั้น) — ช่วงเวลาต้องเป็นของศูนย์นี้ ไม่ส่ง = 422, ต่างศูนย์ = 404"
         start_time:
           type: string
           description: เวลาเริ่มต้นใหม่ (HH:MM)
