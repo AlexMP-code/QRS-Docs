@@ -14,9 +14,9 @@
 | # | Role (DB) | Token Ability | Model | คำอธิบาย |
 |---|---|---|---|---|
 | 1 | `SUPER_ADMIN` | `role:staff` | User | ผู้ดูแลระบบระดับจังหวัด (อบจ./สสจ.) — cross-tenant access |
-| 2 | `HEALTH_CENTER_ADMIN` | `role:staff` | User | ผู้ดูแลระบบประจำ รพ.สต. — scope: ศูนย์ของตนเอง |
+| 2 | `HEALTH_CENTER_ADMIN` | `role:staff` | User | ผู้ดูแลระบบประจำ ศูนย์สุขภาพ — scope: ศูนย์ของตนเอง |
 | 3 | `STAFF` | `role:staff` | User | เจ้าหน้าที่ห้องตรวจ / หมอ / ผู้ช่วย — scope: ศูนย์ของตนเอง |
-| 4 | *(ไม่มี DB role)* | `role:patient` | Patient | ผู้ป่วย / ผู้รับบริการ |
+| 4 | *(ไม่มี DB role)* | `role:patient` | Patient | ผู้รับบริการ / ผู้รับบริการ |
 
 **หมายเหตุเกี่ยวกับ middleware ที่ตรวจสิทธิ์:**
 - Staff ทุก route ถูกกำกับโดย middleware `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` (alias `role`) ซึ่งตรวจ **DB roles** ผ่าน `User::roles()` relation (`user_roles` pivot) เท่านั้น — token ไม่มีส่วนในการตัดสิทธิ์
@@ -27,7 +27,7 @@
 
 ---
 
-## 2. Patient (ผู้ป่วย / ผู้รับบริการ)
+## 2. Patient (ผู้รับบริการ / ผู้รับบริการ)
 
 ### 2.1 การลงทะเบียนและเข้าสู่ระบบ
 
@@ -51,8 +51,8 @@
 |---|---|---|
 | `GET` | `/v1/patient/categories` | หมวดหมู่บริการ — เฉพาะ `status=ACTIVE`, เรียงตาม `sort_order` |
 | `GET` | `/v1/patient/right-types` | สิทธิการรักษา — เฉพาะ `status=ACTIVE` (UCS, OFC, SSS, CASH, OTHER) |
-| `POST` | `/v1/patient/nearby-centers` | ค้นหา รพ.สต. ใกล้เคียง (Haversine; **เฉพาะ** ACTIVE + มีบริการ active ในหมวดที่เลือก; **ไม่มี** radius filter) |
-| `GET` | `/v1/patient/health-centers/{id}` | รายละเอียด รพ.สต. — **ACTIVE หรือ CLOSING** เห็นได้; INACTIVE → 404; คืน `status` ของศูนย์ด้วย |
+| `POST` | `/v1/patient/nearby-centers` | ค้นหา ศูนย์สุขภาพ ใกล้เคียง (Haversine; **เฉพาะ** ACTIVE + มีบริการ active ในหมวดที่เลือก; **ไม่มี** radius filter) |
+| `GET` | `/v1/patient/health-centers/{id}` | รายละเอียด ศูนย์สุขภาพ — **ACTIVE หรือ CLOSING** เห็นได้; INACTIVE → 404; คืน `status` ของศูนย์ด้วย |
 | `GET` | `/v1/patient/health-centers/{id}/services` | บริการของศูนย์ — เฉพาะ services `is_active=true` **และ** มี pivot `service_time_slot` ≥ 1 แถว **และ** อยู่หมวดหมู่ ACTIVE; แต่ละรายการคืน `allow_staff_selection`; envelope คืน `health_center_status`; response ผ่าน Resource (**ไม่มี** `created_at`/`updated_at`) |
 | `GET` | `/v1/patient/available-slots` | ตรวจสอบช่วงเวลาว่าง — พารามิเตอร์ **มีแค่** `service_id` + `date` (ต้อง `>= today`) |
 
@@ -83,7 +83,7 @@
 **ข้อปลีกย่อยที่นักพัฒนาต้องรู้:**
 - ✅ **ข้อความ error ของ booking ถึงผู้รับบริการแล้ว** — เงื่อนไขทางธุรกิจ (คิวเต็ม จองซ้ำ บริการปิด ศูนย์ปิดรับจอง) ตอบข้อความจริงกลับไป; ข้อผิดพลาดที่ไม่คาดคิด (เช่น ฐานข้อมูลล่ม) ตอบ 500 พร้อมข้อความทั่วไปและบันทึกรายละเอียดไว้ใน log เท่านั้น (แก้แล้ว เดิมกลืนทุกข้อความ)
 - ✅ **patient booking เช็ค "staff ทั้งหมดลา" เหมือน walk-in แล้ว** — `BookingService` เรียก `StaffLeave::isServiceAvailable()` ก่อนจอง (แก้ gap #6); ถ้าไม่มี pool (assigned/selectable) ที่กำหนด → ถือว่าเปิดให้บริการ (ให้ capacity/operating-day ตัดสิน)
-- จองซ้ำได้ถ้าคiuก่อนหน้าเป็น CANCELLED/COMPLETED/NO_SHOW (นับเฉพาะ CONFIRMED)
+- จองซ้ำได้ถ้าคิวก่อนหน้าเป็น CANCELLED / COMPLETED / NO_SHOW (นับเฉพาะ CONFIRMED)
 
 ### 2.4 ประวัติและการจัดการนัดหมาย
 
@@ -97,7 +97,7 @@
 - ต้องเป็น `CONFIRMED`
 - ต้องเป็นของตัวเอง (`patient_id`) → ไม่ใช่ → **404**
 - ⚠️ เวลาตัดคือ **`end_time` ของ slot** (ไม่ใช่ start_time): ยกเลิกได้ถ้า `appointment_date > วันนี้` หรือถ้าเป็นวันนี้ต้อง `end_time > now()` — คือยกเลิกได้แม้ slot เริ่มไปแล้ว ขอแค่ยังไม่จบรอบ
-- CANCELLED/COMPLETED/NO_SHOW → ห้าม (query ไม่ match → 404); ตั้งค่า `cancelled_at`, `cancellation_reason` (default "ผู้ป่วยขอยกเลิกเองผ่านระบบ")
+- CANCELLED/COMPLETED/NO_SHOW → ห้าม (query ไม่ match → 404); ตั้งค่า `cancelled_at`, `cancellation_reason` (default "ผู้รับบริการขอยกเลิกเองผ่านระบบ")
 
 **Masking (ตามจริง):**
 - ชื่อ: first_name 2 ตัวแรก + `***` + last_name 2 ตัวแรก + `***` (เช่น `สม*** ใจ***`)
@@ -123,7 +123,7 @@
 
 **พฤติกรรมจริงของ login:**
 - User `status != ACTIVE` (รวม INACTIVE) → ถูกมองเสมือน "ไม่รู้จัก" → **422** "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง" (เหมือน username ผิด)
-- ศูนย์เป็น **INACTIVE** → **403** "รพ.สต. ต้นสังกัดถูกระงับการใช้งานชั่วคราว" (CLOSING ยัง login ได้ — ให้ staff จัดการคิวที่เหลือ)
+- ศูนย์เป็น **INACTIVE** → **403** "ศูนย์สุขภาพ ต้นสังกัดถูกระงับการใช้งานชั่วคราว" (CLOSING ยัง login ได้ — ให้ staff จัดการคิวที่เหลือ)
 - SUPER_ADMIN **ข้าม** การตรวจศูนย์ (ไม่ต้องผูก health center, `health_center_id` เป็น null ได้)
 - Token อายุ **24 ชม.** (Sanctum `expiration => 1440`); logout ลบ token; ลบ user → ลบ tokens ทั้งหมด
 
@@ -143,7 +143,7 @@
 | `POST` | `/v1/staff/services` | STAFF, HC_ADMIN, SUPER_ADMIN | เพิ่มบริการ — **STAFF ทำได้จริง**; บังคับ `allow_staff_selection=false` ตอนสร้างเสมอ; `capacity_type` ∈ PER_MASSEUSE/PER_SLOT/PER_DAY |
 | `PUT` | `/v1/staff/services/{id}` | STAFF, HC_ADMIN, SUPER_ADMIN | แก้บริการ — **STAFF ทำได้จริง**; เปิด staff-selection ต้อง PER_MASSEUSE + มี selectable staff ≥1; ปิดต้องไม่มีคิว CONFIRMED ตั้งแต่วันนี้เป็นต้นไป |
 | `PATCH` | `/v1/staff/services/{id}/toggle-status` | STAFF, HC_ADMIN, SUPER_ADMIN | เปิด/ปิดบริการ — **STAFF ทำได้จริง** (ไม่มี in-controller gate) |
-| `DELETE` | `/v1/staff/services/{id}` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ลบบริการ (**STAFF → 403 "ไม่มีสิทธิ์ลบบริการ"**); 422 ถ้ามีคิว CONFIRMED ตั้งแต่วันนี้; ข้อความ error อื่นกลืนเป็น 422 ทั่วไป |
+| `DELETE` | `/v1/staff/services/{id}` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ลบบริการ (**STAFF → 403 "ไม่มีสิทธิ์ลบบริการ"**); 422 ถ้ามีคิว CONFIRMED ตั้งแต่วันนี้ |
 | `PUT` | `/v1/staff/services/{id}/assignees` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ผูก User (role **STAFF** เท่านั้น) เข้ากับบริการ — STAFF ไม่ได้; user ต้องอยู่ศูนย์เดียวกัน |
 | `PUT` | `/v1/staff/services/{id}/staff` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ผูกหมอที่เลือกได้ (selectable staff, pivot `service_staff`) — STAFF ไม่ได้; หมอต้องศูนย์เดียวกัน + หมวดหมู่เดียวกับบริการ; แกะหมอที่มีคิว CONFIRMED อนาคตไม่ได้; Audit Log |
 | `PUT` | `/v1/staff/services/{id}/time-slot-days` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ตั้งค่าวันเปิด (Recurring Weekly ผ่าน `days_mask` bit 1-7); ห้ามลบ (slot,วัน) ที่มีคิว CONFIRMED อนาคต; Audit Log |
@@ -156,7 +156,7 @@
 | `POST` | `/v1/staff/appointments/walk-in` | STAFF, HC_ADMIN, SUPER_ADMIN | ลง Walk-in หน้างาน |
 | `PATCH` | `/v1/staff/appointments/{id}/status` | STAFF, HC_ADMIN, SUPER_ADMIN | เปลี่ยนสถานะ — transition เดียว: CONFIRMED → COMPLETED/CANCELLED/NO_SHOW |
 | `PATCH` | `/v1/staff/appointments/{id}/reassign-staff` | STAFF, HC_ADMIN, SUPER_ADMIN | ย้ายคิวไปหมออื่น — เฉพาะ CONFIRMED + `allow_staff_selection`; Audit Log |
-| `POST` | `/v1/staff/appointments/{id}/unmask` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูข้อมูลผู้ป่วยเต็ม (PDPA Audit Log); `throttle:unmask` 10 req/min |
+| `POST` | `/v1/staff/appointments/{id}/unmask` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูข้อมูลผู้รับบริการเต็ม (PDPA Audit Log); `throttle:unmask` 10 req/min |
 
 **ข้อจำกัดการมองเห็น (index) — ตามจริง:**
 - **STAFF** (ไม่มี role บริหาร): เห็นเฉพาะนัดของ **Assigned Services** (`service_user` pivot) ของตัวเอง; 403 ถ้า filter `service_id` ที่ไม่ได้รับมอบหมาย
@@ -164,15 +164,15 @@
 - **Walk-in**: STAFF ออกได้เฉพาะ Assigned Services (403 ผิด); HC_ADMIN/SUPER_ADMIN ออกได้ทุกบริการ; 422 ถ้าบริการ "ปิดชั่วคราวเพราะเจ้าหน้าที่ทั้งหมดลางานวันนี้"
 - **updateStatus / reassignStaff / unmaskPatientData**: **STAFF ทำได้ทุกคิวในศูนย์** (ไม่จำกัด assigned services)
 
-### 3.5 การจัดการข้อมูลผู้ป่วย (Patient Data)
+### 3.5 การจัดการข้อมูลผู้รับบริการ (Patient Data)
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
 | `PATCH` | `/v1/staff/patients/{id}/contact` | STAFF, HC_ADMIN, SUPER_ADMIN | แก้เบอร์โทร — regex 10 หลัก + unique; Audit Log (mask เบอร์) |
 | `PATCH` | `/v1/staff/patients/{id}` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | แก้ข้อมูลเต็ม (ชื่อ/นามสกุล/วันเกิด/เพศ/ที่อยู่/CID) — cid 13 หลัก unique; Audit Log (mask) |
-| `GET` | `/v1/staff/admin/patients` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ค้นหาผู้ป่วย — ผู้ป่วยต้อง**เคยมีประวัติคิวที่ศูนย์นั้น** (scope ผ่าน queue history, ไม่มีคอลัมน์ health_center_id บน patient); filter q/cid/phone/gender/province/district |
+| `GET` | `/v1/staff/admin/patients` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ค้นหาผู้รับบริการ — ผู้รับบริการต้อง**เคยมีประวัติคิวที่ศูนย์นั้น** (scope ผ่าน queue history, ไม่มีคอลัมน์ health_center_id บน patient); filter q/cid/phone/gender/province/district |
 
-**เทนเนนต์ไอโซเลชันผู้ป่วย:** ผูกผ่าน `whereHas('appointments', health_center_id=...)` — ผู้ป่วยที่ยังไม่เคยมาศูนย์ไม่โผล่
+**เทนเนนต์ไอโซเลชันผู้รับบริการ:** ผูกผ่าน `whereHas('appointments', health_center_id=...)` — ผู้รับบริการที่ยังไม่เคยมาศูนย์ไม่โผล่
 
 ### 3.6 การจัดการบุคลากร (Roster)
 
@@ -189,7 +189,7 @@
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
 | `GET` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูวันลา — filter `?date=`, `?staff_user_id=`; response ผ่าน `StaffLeaveResource` (**ไม่มี** `created_at`/`updated_at`) |
-| `POST` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ลงวันลา (auto-approved) — `leave_date >= today` (ย้อนหลังไม่ได้); บล็อกถ้ามีคิว CONFIRMED ในวันนั้น; **idempotent** (ซ้ำวันเดิมคืน row เดิม, HTTP 200); ถ้ายังไม่ลิงก์โปรไฟล์หมอกับบัญชี → **ลิงก์อัตโนมัติ** เมื่อระบุตัวได้ไม่กำกวม (ศูนย์เดียว [+ หมวดหมู่ที่ตรงกับบริการที่ได้รับมอบหมาย]; ถ้า ambiguos หลายโปรไฟล์ → ไม่เดา) เพื่อให้ระบบลาของหมอใน roster ถูกนำไปกรองในหน้าจองผู้ป่วยจริง |
+| `POST` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ลงวันลา (auto-approved) — `leave_date >= today` (ย้อนหลังไม่ได้); บล็อกถ้ามีคิว CONFIRMED ในวันนั้น; **idempotent** (ซ้ำวันเดิมคืน row เดิม, HTTP 200); ถ้ายังไม่ลิงก์โปรไฟล์หมอกับบัญชี → **ลิงก์อัตโนมัติ** เมื่อระบุตัวได้ไม่กำกวม (ศูนย์เดียว [+ หมวดหมู่ที่ตรงกับบริการที่ได้รับมอบหมาย]; ถ้า ambiguos หลายโปรไฟล์ → ไม่เดา) เพื่อให้ระบบลาของหมอใน roster ถูกนำไปกรองในหน้าจองผู้รับบริการจริง |
 | `DELETE` | `/v1/staff/leaves/{id}` | STAFF, HC_ADMIN, SUPER_ADMIN | ลบวันลา — scope ตามด้านล่าง |
 | `GET` | `/v1/staff/leaves/availability` | STAFF, HC_ADMIN, SUPER_ADMIN | เช็คว่าบริการเปิดให้บริการวันที่นั้นหรือไม่ (`service_id`+`date` บังคับ) |
 
@@ -201,7 +201,7 @@
 - **Rule กลาง** ของ "บริการเปิดให้จองวัน X ได้ไหม" คือ `StaffLeave::isServiceAvailable(service_id, date, health_center_id)` — ใช้ร่วมกัน 3 จุด: `GET /v1/staff/services?date=` (ซ่อนบริการที่ staff ทั้งหมดลาในวันนั้น), `GET /v1/staff/leaves/availability` (คืน bool ต่อ 1 service), และ `POST /v1/staff/appointments/walk-in` (บังคับ server-side ป้องกัน race) — `services?date=` คือ **canonical source** ของความพร้อมของบริการในมุม staff; availability เป็น convenience bool จาก rule เดียวกัน
 - **ความหมาย "หมอไม่ว่าง" มี 2 กลไก (อย่าสับสน):** `POST/DELETE /v1/staff/leaves` = **ลาหยุดเฉพาะวัน** (ผูก `leave_date`); `PATCH /v1/staff/roster/{id}/toggle-duty` เปลี่ยน `Staff.status=LEAVE` = **ปิดรับจองแบบต่อเนื่อง** จนกว่าจะสลับกลับ — `GET /v1/staff/roster?date=` merge ทั้งสองเป็น `effective_status` (ผลรวมหมายถึงหมอคนนั้นรับจองวันนั้นไม่ได้)
 
-### 3.8 การดูรายชื่อ รพ.สต. (Dropdown)
+### 3.8 การดูรายชื่อ ศูนย์สุขภาพ (Dropdown)
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
@@ -209,9 +209,9 @@
 
 **หมายเหตุ:** สำหรับ STAFF/HC_ADMIN ผลลัพธ์คือแถวคงที่ 1 แถว (ศูนย์ตัวเองจาก session) — ข้อมูลหลักของ "ศูนย์ของฉัน" ได้จาก `GET /v1/staff/me` (ฝัง `health_center` เต็มรูปแบบ); endpoint นี้มีไว้สำหรับ SUPER_ADMIN (dropdown ข้ามศูนย์) ซึ่ง shape (12 คีย์) render ผ่าน `StaffHealthCenterResource` ตัวเดียวกับ `GET /v1/staff/admin/health-centers`
 
-## 4. HC Admin (ผู้ดูแลประจำศูนย์)
+## 4. ผู้ดูแลศูนย์ (`HC_ADMIN`)
 
-HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF มี** แล้วเพิ่มสิทธิ์เฉพาะดังนี้:
+ผู้ดูแลศูนย์มีสิทธิ์ **ทุกอย่างที่เจ้าหน้าที่มี** แล้วเพิ่มสิทธิ์เฉพาะดังนี้:
 
 ### 4.1 สิทธิ์เพิ่มเติมจาก STAFF
 
@@ -220,8 +220,8 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | `DELETE` | `/v1/staff/services/{id}` | ลบบริการ (STAFF ห้ามลบ) |
 | `PUT` | `/v1/staff/services/{id}/staff` | ผูกหมอที่เลือกได้ (selectable staff) เข้ากับบริการ |
 | `PUT` | `/v1/staff/services/{id}/time-slot-days` | ตั้งค่าวันเปิดให้บริการ (Operating Days) |
-| `PATCH` | `/v1/staff/patients/{id}` | แก้ไขข้อมูลผู้ป่วยเต็มรูปแบบ |
-| `GET` | `/v1/staff/admin/patients` | ค้นหารายชื่อผู้ป่วยในศูนย์ตัวเอง |
+| `PATCH` | `/v1/staff/patients/{id}` | แก้ไขข้อมูลผู้รับบริการเต็มรูปแบบ |
+| `GET` | `/v1/staff/admin/patients` | ค้นหารายชื่อผู้รับบริการในศูนย์ตัวเอง |
 
 **สิทธิ์ที่ HC_ADMIN มีเพิ่ม (แต่ STAFF ไม่มี):** ดู/จัดการ user management, ดู time slots, toggle time slot ในศูนย์ตัวเอง, แก้ health center ของตัวเอง, syncStaff/syncTimeSlotDays — ดู §4.2-4.4
 
@@ -235,7 +235,7 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | `DELETE` | `/v1/staff/admin/users/{id}` | ลบผู้ใช้ — ห้ามลบตัวเอง (422); HC_ADMIN ห้ามลบ SUPER_ADMIN (403); ห้ามลบคนสุดท้าย (ดู guard); ห้ามลบถ้ามีคิว CONFIRMED ตั้งแต่วันนี้; ลบแล้ว: staff status=INACTIVE + detach assignedServices + ลบ tokens + soft delete |
 | `GET` | `/v1/staff/admin/roles` | ดู role — SUPER_ADMIN เห็นทั้งหมด; **HC_ADMIN เห็นเฉพาะ STAFF** |
 
-**Last Super Admin Guard:** ห้าม @ลบ / @ถอด role SUPER_ADMIN / @เปลี่ยน status เป็น INACTIVE ของ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE (เช็คผ่าน `isLastActiveSuperAdmin` — นับ user ACTIVE ที่ถือ role SUPER_ADMIN ไม่รวมตัวเอง) → 422
+**การป้องกันผู้ดูแลระบบคนสุดท้าย:** ห้าม @ลบ / @ถอด role SUPER_ADMIN / @เปลี่ยน status เป็น INACTIVE ของ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE (เช็คผ่าน `isLastActiveSuperAdmin` — นับ user ACTIVE ที่ถือ role SUPER_ADMIN ไม่รวมตัวเอง) → 422
 
 ### 4.3 การจัดการ Time Slots
 
@@ -250,7 +250,7 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 - Create/Update = SUPER_ADMIN only; slot แต่ละตัวเป็นของศูนย์ (`health_center_id` **NOT NULL** + unique `(health_center_id, start_time, end_time)`)
 - ช่วงเวลาใหม่ที่ทับกับช่วงเวลาเดิมของศูนย์เดียวกันถูกปฏิเสธจริง (ช่วงที่ต่อกันพอดีไม่ถือว่าทับ)
 
-### 4.4 การจัดการข้อมูล รพ.สต.
+### 4.4 การจัดการข้อมูล ศูนย์สุขภาพ
 
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
@@ -258,19 +258,19 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 
 ---
 
-## 5. Super Admin (ผู้ดูแลระบบสูงสุด)
+## 5. ผู้ดูแลระบบ (`SUPER_ADMIN`)
 
-> Super Admin มี **ทุกสิทธิ์ที่ HC Admin มี** แล้วเพิ่มสิทธิ์ข้ามศูนย์ (cross-tenant) ดังนี้:
+> ผู้ดูแลระบบมี **ทุกสิทธิ์ที่ผู้ดูแลศูนย์มี** แล้วเพิ่มสิทธิ์ข้ามศูนย์ (cross-tenant) ดังนี้:
 
 ### 5.1 Cross-Center Access
 
-- ดู Dashboard / บริการ / นัด / roster / leaves / ผู้ป่วย / health-centers แบบ**ทุกศูนย์** (ไม่ระบุ `health_center_id` = รวมทุกศูนย์)
+- ดู Dashboard / บริการ / นัด / roster / leaves / ผู้รับบริการ / health-centers แบบ**ทุกศูนย์** (ไม่ระบุ `health_center_id` = รวมทุกศูนย์)
 - **กฎหลัก:** ทุกรายการ write เฉพาะเจาะจง (service, patient, health-center, user, discord) ต้องระบุ `health_center_id` ใน request → ไม่ส่ง = **422** "SUPER_ADMIN ต้องระบุ health_center_id"; ส่งแล้วไม่มีศูนย์นั้น = 404
 - **ทุก endpoint ที่ต้องระบุศูนย์ใช้เกณฑ์เดียวกัน** แล้ว (รวม walk-in, Discord, ช่วงเวลา, วันให้บริการ) — เคยมีจุดที่เขียนตรรกะตรวจศูนย่อเองจนตอบกลับต่างจากกัน แก้แล้ว
 - **⚠️ ข้อยกเว้น:** `POST /admin/users` ให้ SUPER_ADMIN สร้าง user แบบ center null ได้
 - **หมายเหตุ:** ผู้ดูแลระบบเลือกศูนย์ที่จะดูรายชื่อช่วงเวลาได้จาก `GET /v1/staff/health-centers` การดูช่วงเวลาข้ามศูนย์ในคำขอเดียวไม่มีแล้ว
 
-### 5.2 Super Admin Only Endpoints
+### 5.2 Endpoint ที่เฉพาะผู้ดูแลระบบ
 
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
@@ -281,22 +281,22 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 | `PUT` | `/v1/staff/admin/time-slots/{id}` | แก้ slot — SUPER_ADMIN only; **บังคับ `health_center_id`; slot ต้องเป็นของศูนย์นั้น (ต่าง = 404)**; ส่ง `is_active: false` ตอนสร้างได้ |
 | `DELETE` | `/v1/staff/admin/time-slots/{id}` | **ไม่รองรับการลบช่วงเวลา** — ตอบ 422 ทุกกรณี (ไม่ว่าจะมีนัดหมายหรือไม่) พร้อมชี้ทางเลือก "กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน" |
 
-### 5.3 Cross-Center Operations (ใช้ endpoint เดียวกับ HC Admin แต่ scope ข้ามศูนย์)
+### 5.3 การทำงานข้ามศูนย์ (ใช้ endpoint เดียวกับผู้ดูแลศูนย์ แต่ scope ข้ามศูนย์)
 
 | Operation | Endpoint | ข้อจำกัดเพิ่มเติม |
 |---|---|---|
-| แก้ไขข้อมูลผู้ป่วย | `PATCH /v1/staff/patients/{id}` | ต้องระบุ `health_center_id`; ผู้ป่วยต้องมีประวัติคิวที่ศูนย์นั้น |
+| แก้ไขข้อมูลผู้รับบริการ | `PATCH /v1/staff/patients/{id}` | ต้องระบุ `health_center_id`; ผู้รับบริการต้องมีประวัติคิวที่ศูนย์นั้น |
 | ผูกหมอเข้ากับบริการ | `PUT /v1/staff/services/{id}/staff` | ต้องระบุ `health_center_id`; หมอต้องในศูนย์เดียวกันและหมวดหมู่เดียวกับบริการ |
 | ตั้งค่าวันเปิดให้บริการ | `PUT /v1/staff/services/{id}/time-slot-days` | ต้องระบุ `health_center_id`; **ช่วงเวลาที่เลือกต้องเป็นของศูนย์เดียวกับบริการ (ต่าง = 422)** — บังคับทั้งในโค้ดและระดับฐานข้อมูล |
-| แก้ไขข้อมูล รพ.สต. | `PATCH /v1/staff/health-centers/{id}` | แก้ได้ทุกฟิลด์ **รวมถึง `code`**; `health_center_id` ต้องตรงกับ `{id}` |
+| แก้ไขข้อมูล ศูนย์สุขภาพ | `PATCH /v1/staff/health-centers/{id}` | แก้ได้ทุกฟิลด์ **รวมถึง `code`**; `health_center_id` ต้องตรงกับ `{id}` |
 
 ### 5.4 สถานะ 3 ระดับของศูนย์สุขภาพ (Open/Close Lifecycle)
 
 | สถานะ | ความหมาย |
 |---|---|
 | `ACTIVE` | เปิดรับจองตามปกติ |
-| `CLOSING` | ปิดรับจองใหม่, ผู้ป่วยจองไม่ได้ (isBookable=false), แต่ staff login ได้ (เฉพาะ INACTIVE บล็อก login) + ผู้ป่วยยังเห็น/ยกเลิกนัดเดิมได้ |
-| `INACTIVE` | ปิดสมบูรณ์ — ซ่อนจากผู้ป่วย (404) และ staff ใหม่ login ไม่ได้ |
+| `CLOSING` | ปิดรับจองใหม่, ผู้รับบริการจองไม่ได้ (isBookable=false), แต่ staff login ได้ (เฉพาะ INACTIVE บล็อก login) + ผู้รับบริการยังเห็น/ยกเลิกนัดเดิมได้ |
+| `INACTIVE` | ปิดสมบูรณ์ — ซ่อนจากผู้รับบริการ (404) และ staff ใหม่ login ไม่ได้ |
 
 **Transitions ที่ทำได้ (SUPER_ADMIN toggle):** ACTIVE→CLOSING, CLOSING→ACTIVE, INACTIVE→ACTIVE (ไม่มี ACTIVE/CLOSING→INACTIVE ผ่าน endpoint นี้ — INACTIVE เกิดจาก auto-close job เท่านั้น)
 
@@ -350,25 +350,25 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 
 | # | กลไก | layer ที่ enforce | หมายเหตุ |
 |---|---|---|---|
-| 1 | **Data Privacy (PDPA)** — ข้อมูลผู้ป่วย mask เป็นค่าเริ่มต้น; Unmask/แก้ไขบันทึก Audit Log | Resource/accessor + Controller/Service | ดูตาราง Audit Log ด้านล่าง — **ไม่ใช่ทุก action ที่ mask** |
+| 1 | **Data Privacy (PDPA)** — ข้อมูลผู้รับบริการ mask เป็นค่าเริ่มต้น; Unmask/แก้ไขบันทึก Audit Log | Resource/accessor + Controller/Service | ดูตาราง Audit Log ด้านล่าง — **ไม่ใช่ทุก action ที่ mask** |
 | 2 | **Strict Multi-Tenancy** — staff จัดการเฉพาะศูนย์ตัวเอง | Trait `ResolvesHealthCenterScope` (ทุก endpoint) + Service `where(health_center_id)->findOrFail()` + DB `NOT NULL` | SUPER_ADMIN ต้องระบุศูนย์เสมอ — เคยมีข้อยกเว้นที่ช่วงเวลา แก้แล้ว |
 | 3 | **Assigned Services scope** — STAFF เห็นนัด/Walk-in เฉพาะบริการที่ assign | Controller (index/walkInBooking) | updateStatus/reassign/unmask ไม่จำกัด assigned |
 | 4 | **Operating Days Hard Gate** — แต่ละ (service,slot) มี `days_mask` (bit 1-7) | Request validation (book/walk-in) + `OperatingDayService::isSlotAvailableOnDate` | pivot `service_time_slot`; slot ต้อง active; **slot ต้องเป็นของศูนย์เดียวกับบริการ (บังคับทั้งโค้ดและ composite FK)** |
-| 5 | **Capacity & anti-overbooking** — นับ CONFIRMED ลดจาก quota; staff-selection 1 คิว/รอบ/คน | `CapacityService` + `lockForUpdate` ใน transaction | ยังมีจุด: ข้อความ booking กลืน 422, แสดงผล snapshot ไม่ lock |
+| 5 | **Capacity & anti-overbooking** — นับ CONFIRMED ลดจาก quota; เลือกบุคลากร 1 คิว/รอบ/คน | `CapacityService` + `lockForUpdate` ใน transaction | ตัวเลขที่แสดงเป็น snapshot เวลาเรียกดู ไม่ได้ล็อกข้อมูล |
 | 6 | **Confirmed-queue guards** — ห้ามลบ/ปิดสิ่งที่กำลังมีคิว (services, staff, time-slot-days, user, leave, duty) | Service + Controller | **ช่วงเวลาไม่ลบเลย** ตาม ADR-0001 ใช้ปิดใช้งานแทน; การลบศูนย์/บริการ/ช่วงเวลาที่มีนัดหมายจะถูก FK `RESTRICT` บล็อก |
-| 7 | **Health Center Lifecycle** — ACTIVE/CLOSING/INACTIVE + auto-close job | Service (SUPER_ADMIN toggle) + `CloseHealthCenterJob` | auto-close เช็ค CONFIRMED ไม่กรองวันที่ (อาจ bug) |
+| 7 | **Health Center Lifecycle** — ACTIVE/CLOSING/INACTIVE + auto-close job | Service (ผู้ดูแลระบบสลับสถานะ) + `CloseHealthCenterJob` | auto-close นับเฉพาะคิวตั้งแต่วันนี้ขึ้นไป คิวของวันที่ผ่านมาไม่นับ |
 | 8 | **Staff Selection** — `allow_staff_selection=true` บังคับ PER_MASSEUSE + selectable staff ≥1; ป้องกันการแกะหมอที่มีคิว | Service `update` + `syncStaff` | เปิด/ปิด + ผูกหมอต้องระดับ admin |
-| 9 | **Last Super Admin Guard** — ห้ามลบ/ปิด SUPER_ADMIN คนสุดท้ายที่ ACTIVE | `StaffUserManagementController` + `isLastActiveSuperAdmin` | |
+| 9 | **การป้องกันผู้ดูแลระบบคนสุดท้าย** — ห้ามลบ/ปิด SUPER_ADMIN คนสุดท้ายที่ ACTIVE | `StaffUserManagementController` + `isLastActiveSuperAdmin` | |
 | 10 | **Audit Trail** — 11 actions รายละเอียดด้านล่าง | Service/Controller/Job | |
 
 ### 7.1 ตาราง Audit Log (action + ข้อมูลที่เก็บ/mask ตามจริง)
 
 | Action | เกิดขึ้นเมื่อ | ข้อมูลใน payload | Mask? |
 |---|---|---|---|
-| `UNMASK_PATIENT_DATA` | staff ดูข้อมูลผู้ป่วยเต็ม | `appointment_id` (ข้อมูลจริงคืน client แต่ไม่เก็บใน log) | — |
-| `UPDATE_PATIENT_CONTACT` | แก้เบอร์โทรผู้ป่วย | `field=phone_number, old, new` | เบอร์ mask `063-***-1234` |
-| `UPDATE_PATIENT_PROFILE` | แก้ข้อมูลผู้ป่วยเต็ม | per-field `field/old/new` | cid mask `1-****-*****-99`, เบอร์ mask; ฟิลด์อื่นเก็บเต็ม |
-| `UPDATE_HEALTH_CENTER` | แก้ข้อมูล รพ.สต. | per-field old/new | **ไม่ mask** (ค่าเต็ม) |
+| `UNMASK_PATIENT_DATA` | staff ดูข้อมูลผู้รับบริการเต็ม | `appointment_id` (ข้อมูลจริงคืน client แต่ไม่เก็บใน log) | — |
+| `UPDATE_PATIENT_CONTACT` | แก้เบอร์โทรผู้รับบริการ | `field=phone_number, old, new` | เบอร์ mask `063-***-1234` |
+| `UPDATE_PATIENT_PROFILE` | แก้ข้อมูลผู้รับบริการเต็ม | per-field `field/old/new` | cid mask `1-****-*****-99`, เบอร์ mask; ฟิลด์อื่นเก็บเต็ม |
+| `UPDATE_HEALTH_CENTER` | แก้ข้อมูล ศูนย์สุขภาพ | per-field old/new | **ไม่ mask** (ค่าเต็ม) |
 | `UPDATE_HEALTH_CENTER_STATUS` | toggle สถานะศูนย์ | `from, to` | — |
 | `AUTO_CLOSE_HEALTH_CENTER` | auto-close job | `from=CLOSING, to=INACTIVE` (user_id=null) | — |
 | `APPOINTMENT_STAFF_REASSIGN` | ย้ายคิวไปหมออื่น | `before_staff_id, after_staff_id` | — |
@@ -452,16 +452,18 @@ HC Admin มีสิทธิ์ **ทุกอย่างที่ STAFF ม�
 
 ---
 
-## 9. สรุป Gap / จุดที่ควรแก้ไขใน code (พบระหว่างการตรวจ verify)
+## 9. สรุป Gap ที่พบระหว่างการตรวจสอบ
 
 | # | จุด | ประเภท | ผลกระทบ |
 |---|---|---|---|
-| 1 | staff login throttle นับเฉพาะ 401/403 → login ผิด (422) ไม่ทำให้ลิมิตทำงาน | bug | ไม่มีป้องกัน brute-force staff login |
-| 2 | ~~`StaffTimeSlotController` ไม่บังคับ `health_center_id`~~ — ✅ **แก้แล้ว**: ทุก endpoint ของช่วงเวลาใช้ตัวแก้ scope กลางแล้ว (SUPER_ADMIN ต้องระบุศูนย์, ข้ามศูนย์ไม่ได้) + คอลัมน์ศูนย์เป็น NOT NULL | fixed | — |
-| 3 | Auto-close เช็ค CONFIRMED โดยไม่กรองวันที่ → คิวเก่าในอดีตบล็อกการปิดศูนย์ | bug | ศูนย์อาจไม่ปิดเป็น INACTIVE |
-| 4 | booking error ทั้งหมด กลืนเป็นข้อความเดียว | design | ผู้ใช้รู้สาเหตุไม่ได้; debug ต้องดู log |
-| 5 | ตัวแก้ scope กลางถูกเรียก **ภายใน `try/catch (\Exception)`** ที่ `StaffServiceController::update()` และ `destroy()` → `abort()` ถูกกลืน กลายเป็น 422 ที่ข้อความว่าง | bug | — ✅ **แก้แล้ว**: ย้ายออกนอก try ทั้งสองจุด |
-| 6 | ตั้งวันให้บริการเคยไม่ตรวจว่าช่วงเวลาเป็นของศูนย์เดียวกับบริการ — ✅ **แก้แล้ว**: บังคับในโค้ด (422) และระดับฐานข้อมูล (composite FK) | fixed | — |
-| 7 | patient booking ไม่เช็ค "staff ทั้งหมดลา" (ต่างจาก walk-in) — ✅ **แก้แล้ว**: BookingService เรียก `StaffLeave::isServiceAvailable()` เหมือน walk-in; pool ว่าง → capacity ตัดสิน | fixed | — |
-| 8 | `GET /v1/staff/health-centers` ถ้า call ด้วย Patient token → 500 — ✅ **แก้แล้ว**: route มี `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` แล้ว (รวม `/me`, `PATCH /me`, `/logout` ด้วย) | fixed | — |
-| 9 | role middleware fallback token ability dead (`role:staff` vs `STAFF`) | dead code | สร้างความเข้าใจผิด; ควรลบ fallback หรือแก้ case |
+| 1 | staff login throttle นับเฉพาะ 401/403 — ✅ **แก้แล้ว**: นับทุกครั้งที่พยายาม ล้างเมื่อสำเร็จ | fixed | — |
+| 2 | ~~`StaffTimeSlotController` ไม่บังคับ `health_center_id`~~ — ✅ **แก้แล้ว**: ทุก endpoint ของช่วงเวลาใช้ตัวแก้ scope กลางแล้ว (ผู้ดูแลระบบต้องระบุศูนย์, ข้ามศูนย์ไม่ได้) + คอลัมน์ศูนย์เป็น NOT NULL | fixed | — |
+| 3 | Auto-close เช็ค CONFIRMED โดยไม่กรองวันที่ — ✅ **แก้แล้ว**: ใช้ `Appointment::pending()` ที่นับตั้งแต่วันนี้ขึ้นไป | fixed | — |
+| 4 | booking error ทั้งหมดถูกกลืน — ✅ **แก้แล้ว**: `BookingException` ส่งข้อความจริงกลับ, กลืนเฉพาะข้อผิดพลาดของระบบ | fixed | — |
+| 5 | ตัวแก้ scope กลางถูกเรียกภายใน `try/catch` — ✅ **แก้แล้ว**: ย้ายออกนอก `try` ทั้งสองจุด | fixed | — |
+| 6 | ตั้งวันให้บริการไม่ตรวจว่าช่วงเวลาเป็นของศูนย์เดียวกับบริการ — ✅ **แก้แล้ว**: บังคับในโค้ด (422) และระดับฐานข้อมูล (composite FK) | fixed | — |
+| 7 | การจองของผู้รับบริการไม่เช็กว่าบุคลากรลาครบหรือไม่ — ✅ **แก้แล้ว**: `BookingService` เรียก `StaffLeave::isServiceAvailable()` เหมือนหน้าเคาน์เตอร์; pool ว่าง → โควตาตัดสิน | fixed | — |
+| 8 | `GET /v1/staff/health-centers` เรียกด้วย token ผู้รับบริการ → 500 — ✅ **แก้แล้ว**: route มี `role:` gate แล้ว | fixed | — |
+| 9 | role middleware อ่านสิทธิ์จาก token abilities ซึ่งไม่ตรงกับบทบาทจริง — ✅ **แก้แล้ว**: อ่านจาก `user_roles` ในฐานข้อมูลเท่านั้น | fixed | — |
+
+> ทั้งหมดแก้แล้วในรอบ hardening — คงไว้เพื่อบันทึกว่าอะไรเคยเป็นปัญหาและตอนนี้อยู่ตรงไหน

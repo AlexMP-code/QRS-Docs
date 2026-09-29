@@ -2,13 +2,13 @@ openapi: 3.0.3
 info:
   title: QRS - Queue Reservation System API
   description: |
-    ระบบจัดการคิวสำรองนัดหมาย รพ.สต. จ.ลำพูน (Queue Reservation System for 71 Health Centers in Lamphun Province)
+    ระบบจัดการคิวสำรองนัดหมาย ศูนย์สุขภาพ จ.ลำพูน (Queue Reservation System for 71 Health Centers in Lamphun Province)
 
     โครงสร้าง API Specification นี้จัดกลุ่มตาม **Feature-First Pattern** เพื่อความง่ายในการพัฒนาและไล่เรียง Workflow
 
     ## Core Roles & Permissions
     - `SUPER_ADMIN` (role_id=1) — ผู้ดูแลระบบระดับจังหวัด จัดการทุกอย่างข้ามศูนย์ (cross-tenant)
-    - `HEALTH_CENTER_ADMIN` (role_id=2) — ผู้ดูแล รพ.สต. จัดการข้อมูลของศูนย์ตนเอง
+    - `HEALTH_CENTER_ADMIN` (role_id=2) — ผู้ดูแล ศูนย์สุขภาพ จัดการข้อมูลของศูนย์ตนเอง
     - `STAFF` (role_id=3) — เจ้าหน้าที่ห้องตรวจ ออกคิว Walk-in และจัดการคิวประจำวัน
     - `Patient` — ประชาชน / ผู้รับบริการ
 
@@ -36,17 +36,17 @@ tags:
   - name: "1. Authentication & Profile"
     description: ระบบยืนยันตัวตน, ลงทะเบียน, จัดการโปรไฟล์ส่วนตัว และจัดการบัญชีผู้ใช้งานระบบ
   - name: "2. Health Center Management"
-    description: ค้นหา รพ.สต., ดูรายละเอียด, จัดการข้อมูลศูนย์ และสลับสถานะเปิด/ปิดรับจอง (ACTIVE/CLOSING/INACTIVE)
+    description: ค้นหา ศูนย์สุขภาพ, ดูรายละเอียด, จัดการข้อมูลศูนย์ และสลับสถานะเปิด/ปิดรับจอง (ACTIVE/CLOSING/INACTIVE)
   - name: "3. Service Management"
     description: จัดการบริการ (Services), มอบหมายเจ้าหน้าที่ดูแล และกำหนดวันเปิดให้บริการ (Operating Days)
   - name: "4. Time Slot Master"
-    description: "จัดการ Time Slots ราย รพ.สต. (เดิมตั้งไว้เป็น Master ระดับจังหวัด — จริงแล้ว per-center: time_slots ผูก health_center_id (NOT NULL, FK) + unique (health_center_id, start_time, end_time)); CRUD เฉพาะ SUPER_ADMIN (ต้องระบุศูนย์), toggle-status HC_ADMIN/SUPER_ADMIN ได้เฉพาะศูนย์ตัวเอง — ไม่มีการลบช่วงเวลา ใช้ปิดใช้งานแทน"
+    description: "จัดการ Time Slots ราย ศูนย์สุขภาพ (เดิมตั้งไว้เป็น Master ระดับจังหวัด — จริงแล้ว per-center: time_slots ผูก health_center_id (NOT NULL, FK) + unique (health_center_id, start_time, end_time)); CRUD เฉพาะ SUPER_ADMIN (ต้องระบุศูนย์), toggle-status HC_ADMIN/SUPER_ADMIN ได้เฉพาะศูนย์ตัวเอง — ไม่มีการลบช่วงเวลา ใช้ปิดใช้งานแทน"
   - name: "5. Roster & Staff Leave"
     description: จัดการตารางปฏิบัติงาน, รายชื่อบุคลากร, สลับเวร และลงวันลา (Leave Management)
   - name: "6. Appointment & Queue"
     description: ตรวจสอบสล็อตว่าง, จองคิวออนไลน์, ออกคิว Walk-in, เปลี่ยนสถานะคิว และดูประวัตินัดหมาย
   - name: "7. Patient Data & PDPA Privacy"
-    description: ค้นหาผู้รับบริการ, แก้ไขโปรไฟล์/เบอร์โทรผู้ป่วย และ Unmask ข้อมูลจริง (PDPA Audit Trigger)
+    description: ค้นหาผู้รับบริการ, แก้ไขโปรไฟล์/เบอร์โทรผู้รับบริการ และ Unmask ข้อมูลจริง (PDPA Audit Trigger)
   - name: "8. System Integrations"
     description: ตั้งค่าการเชื่อมต่อระบบภายนอก (Discord Webhook Notifications)
 
@@ -184,8 +184,8 @@ paths:
         "403":
           description: |
             ไม่สามารถเข้าสู่ระบบได้ —
-            ยังไม่ได้ผูกกับ รพ.สต. (ยกเว้น SUPER_ADMIN) หรือ
-            รพ.สต. ของบัญชีมีสถานะ INACTIVE (CLOSING ยัง login ได้ — ให้ staff จัดการคิวที่เหลือ)
+            ยังไม่ได้ผูกกับ ศูนย์สุขภาพ (ยกเว้น SUPER_ADMIN) หรือ
+            ศูนย์สุขภาพ ของบัญชีมีสถานะ INACTIVE (CLOSING ยัง login ได้ — ให้ staff จัดการคิวที่เหลือ)
         "429":
           description: |
             พยายามเข้าสู่ระบบมากเกินไป (throttle:staff) — 5 ครั้ง/30 นาที key by username+IP → ล็อกชั่วคราว 30 นาที
@@ -298,7 +298,7 @@ paths:
   /v1/staff/admin/users:
     get:
       tags: ["1. Authentication & Profile"]
-      summary: "[HC Admin / Super Admin] รายชื่อผู้ใช้ระบบ (กรอง/ค้นหา)"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] รายชื่อผู้ใช้ระบบ (กรอง/ค้นหา)"
       description: |
         SUPER_ADMIN เห็นทุกศูนย์; HC_ADMIN เห็นเฉพาะบัญชีในศูนย์ตนเอง
         แสดงเฉพาะผู้ใช้ที่ยังไม่ถูกลบ (soft delete) — บัญชีที่ลบไปแล้วจะไม่ปรากฏในผลลัพธ์
@@ -313,7 +313,7 @@ paths:
           in: query
           schema:
             type: integer
-          description: กรองตาม รพ.สต.
+          description: กรองตาม ศูนย์สุขภาพ
         - name: status
           in: query
           schema:
@@ -361,7 +361,7 @@ paths:
 
     post:
       tags: ["1. Authentication & Profile"]
-      summary: "[HC Admin / Super Admin] สร้างบัญชีผู้ใช้ระบบใหม่"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] สร้างบัญชีผู้ใช้ระบบใหม่"
       description: |
         HC_ADMIN สร้างได้เฉพาะ role STAFF เท่านั้น
         ทุกการสร้างสำเร็จถูกบันทึก audit_logs (`USER_CREATED` — username, name, health_center_id, role_ids)
@@ -404,7 +404,7 @@ paths:
 
     patch:
       tags: ["1. Authentication & Profile"]
-      summary: "[HC Admin / Super Admin] แก้ไขข้อมูลผู้ใช้ระบบ"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] แก้ไขข้อมูลผู้ใช้ระบบ"
       description: |
         HC_ADMIN: อัปเดตเฉพาะผู้ใช้ในศูนย์ตัวเอง, role_ids จำกัดเฉพาะ STAFF,
         ไม่สามารถแก้ไข SUPER_ADMIN หรือย้ายผู้ใช้ข้ามศูนย์ได้
@@ -444,19 +444,19 @@ paths:
 
     delete:
       tags: ["1. Authentication & Profile"]
-      summary: "[HC Admin / Super Admin] ลบผู้ใช้ระบบ (soft delete — ห้ามลบตัวเอง / SUPER_ADMIN / มีคิวอนาคต)"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] ลบผู้ใช้ระบบ (soft delete — ห้ามลบตัวเอง / SUPER_ADMIN / มีคิวอนาคต)"
       description: |
         **Soft delete** — ผู้ใช้ถูกลบแบบ soft (ตั้ง `deleted_at`) และไม่มี endpoint กู้คืน:
         - บัญชีหายจากรายชื่อผู้ใช้ และ login ไม่ได้อีกต่อไป
         - บุคลากรใน roster ของบัญชีถูกตัดออก: `staff.user_id` → null, `staff.status` → INACTIVE (ยังอยู่ใน roster)
-        - เลิกผูกบริการที่ผู้ป่วยเลือกได้ (`service_user`) และเพิกถอน token (Sanctum) ทั้งหมด
+        - เลิกผูกบริการที่ผู้รับบริการเลือกได้ (`service_user`) และเพิกถอน token (Sanctum) ทั้งหมด
         - เก็บประวัติ `user_roles` / `staff_leaves` / `audit_logs` ไว้; username/email เดิมไม่ถูกนำมาใช้ซ้ำ
 
         Guard ที่ห้ามลบ (422):
         - ลบบัญชีของตนเอง → "ไม่สามารถลบบัญชีของตนเองได้"
         - ลบ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE → "ไม่สามารถลบบัญชี SUPER_ADMIN คนสุดท้ายได้"
         - บัญชีมีคิว CONFIRMED ในอนาคต (วันนี้เป็นต้นไป) ผูกกับบุคลากรใน roster → "ไม่สามารถลบบัญชีผู้ใช้ได้ เนื่องจากมีคิวที่จองไว้แล้ว N คิว กรุณาจัดการคิวก่อน"
-        - HC_ADMIN พยายามลบ SUPER_ADMIN → 403 "ไม่สามารถลบบัญชี Super Admin ได้"
+        - HC_ADMIN พยายามลบ SUPER_ADMIN → 403 "ไม่สามารถลบบัญชีผู้ดูแลระบบได้"
 
         ทุกการลบสำเร็จถูกบันทึก audit_logs (`USER_DELETED` — username, name, health_center_id, staff_ids)
       operationId: adminDeleteUser
@@ -485,7 +485,7 @@ paths:
   /v1/staff/admin/roles:
     get:
       tags: ["1. Authentication & Profile"]
-      summary: "[HC Admin / Super Admin] รายชื่อ Role ที่สิทธิ์ตนเองมองเห็น (Dropdown)"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] รายชื่อ Role ที่สิทธิ์ตนเองมองเห็น (Dropdown)"
       description: |
         เฉพาะ SUPER_ADMIN / HEALTH_CENTER_ADMIN (STAFF เข้าไม่ได้ — 403)
         SUPER_ADMIN เห็นทุก role; HC_ADMIN เห็นเฉพาะ STAFF
@@ -523,7 +523,7 @@ paths:
   /v1/patient/nearby-centers:
     post:
       tags: ["2. Health Center Management"]
-      summary: "[Public] ค้นหา รพ.สต. ใกล้เคียง (Haversine)"
+      summary: "[Public] ค้นหา ศูนย์สุขภาพ ใกล้เคียง (Haversine)"
       description: "Method: POST — คืนเฉพาะศูนย์ที่ status=ACTIVE และมีบริการที่เปิดใช้งาน (is_active) ในหมวดหมู่ที่เลือก (ไม่มี radius filter)"
       operationId: patientSearchNearby
       requestBody:
@@ -572,7 +572,7 @@ paths:
   /v1/patient/health-centers/{id}:
     get:
       tags: ["2. Health Center Management"]
-      summary: "[Public] รายละเอียด รพ.สต. (ชื่อ, ที่อยู่, พิกัด)"
+      summary: "[Public] รายละเอียด ศูนย์สุขภาพ (ชื่อ, ที่อยู่, พิกัด)"
       operationId: patientGetCenterDetail
       parameters:
         - name: id
@@ -600,7 +600,7 @@ paths:
   /v1/staff/health-centers:
     get:
       tags: ["2. Health Center Management"]
-      summary: "[Staff All] รายชื่อ รพ.สต. (Dropdown สำหรับเจ้าหน้าที่)"
+      summary: "[Staff All] รายชื่อ ศูนย์สุขภาพ (Dropdown สำหรับเจ้าหน้าที่)"
       description: role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN — เฉพาะ staff token (Patient token → 403). SUPER_ADMIN เห็นทุกศูนย์แบบเต็ม; HC_ADMIN/STAFF เห็นเฉพาะศูนย์ตนเองแบบย่อ (ACTIVE / CLOSING)
       operationId: staffListHealthCenters
       responses:
@@ -625,7 +625,7 @@ paths:
   /v1/staff/admin/health-centers:
     get:
       tags: ["2. Health Center Management"]
-      summary: "[Super Admin] รายชื่อ รพ.สต. ทั้งหมด (ทุก Status + Paginated)"
+      summary: "[ผู้ดูแลระบบ] รายชื่อ ศูนย์สุขภาพ ทั้งหมด (ทุก Status + Paginated)"
       operationId: adminListHealthCenters
       parameters:
         - name: q
@@ -693,7 +693,7 @@ paths:
 
     patch:
       tags: ["2. Health Center Management"]
-      summary: "[HC Admin / Super Admin] แก้ไขข้อมูล รพ.สต."
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] แก้ไขข้อมูล ศูนย์สุขภาพ"
       description: HC_ADMIN แก้ไขเฉพาะศูนย์ตนเอง; SUPER_ADMIN แก้ไขได้ทุกศูนย์และเพิ่ม `code` ได้
       operationId: staffUpdateHealthCenter
       requestBody:
@@ -737,11 +737,11 @@ paths:
 
     patch:
       tags: ["2. Health Center Management"]
-      summary: "[Super Admin] สลับสถานะเปิด/ปิดรับการจองศูนย์ (ACTIVE ↔ CLOSING / INACTIVE → ACTIVE)"
+      summary: "[ผู้ดูแลระบบ] สลับสถานะเปิด/ปิดรับการจองศูนย์ (ACTIVE ↔ CLOSING / INACTIVE → ACTIVE)"
       description: |
         - ACTIVE: เปิดรับจอง
         - CLOSING: ปิดรับการจองใหม่ แต่ยังให้บริการคิวเดิมที่ค้างอยู่
-        - INACTIVE: ปิดสมบูรณ์ (ซ่อนจากผู้ป่วย)
+        - INACTIVE: ปิดสมบูรณ์ (ซ่อนจากผู้รับบริการ)
       operationId: staffToggleHealthCenterStatus
       requestBody:
         required: true
@@ -806,7 +806,7 @@ paths:
   /v1/patient/health-centers/{id}/services:
     get:
       tags: ["3. Service Management"]
-      summary: "[Public] รายการบริการทั้งหมดของ รพ.สต."
+      summary: "[Public] รายการบริการทั้งหมดของ ศูนย์สุขภาพ"
       operationId: patientGetCenterServices
       parameters:
         - name: id
@@ -831,7 +831,7 @@ paths:
                         description: สถานะปัจจุบันของศูนย์ (ACTIVE = เปิดรับจอง / CLOSING = กำลังปิด)
                       data:
                         type: array
-                        description: รายการบริการแบบย่อ (PatientServiceBrief) — ใช้สำหรับหน้าจองของผู้ป่วย
+                        description: รายการบริการแบบย่อ (PatientServiceBrief) — ใช้สำหรับหน้าจองของผู้รับบริการ
                         items:
                           $ref: "#/components/schemas/PatientServiceBrief"
         "404":
@@ -841,7 +841,7 @@ paths:
   /v1/staff/services:
     get:
       tags: ["3. Service Management"]
-      summary: "[Staff All] รายการบริการทั้งหมดของ รพ.สต."
+      summary: "[Staff All] รายการบริการทั้งหมดของ ศูนย์สุขภาพ"
       description: |
         ถ้าระบุ date → ซ่อนบริการที่ไม่มี staff ว่างวันนั้น
         (staff-selection → หมอที่เลือกได้ลาทั้งหมด; ปกติ → staff มอบหมายลาทั้งหมด)
@@ -1002,7 +1002,7 @@ paths:
 
     put:
       tags: ["3. Service Management"]
-      summary: "[HC Admin / Super Admin] มอบหมาย/ถอด เจ้าหน้าที่ดูแลบริการ"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] มอบหมาย/ถอด เจ้าหน้าที่ดูแลบริการ"
       description: |
         มอบหมาย STAFF เป็นผู้รับผิดชอบบริการ (เฉพาะ HC_ADMIN / SUPER_ADMIN; STAFF → 403)
         ส่ง user_ids=[] เพื่อถอดมอบหมายทั้งหมด
@@ -1037,7 +1037,7 @@ paths:
 
     put:
       tags: ["3. Service Management"]
-      summary: "[HC Admin / Super Admin] ตั้งค่าวันเปิดให้บริการ (Operating Days) รายช่วงเวลา"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] ตั้งค่าวันเปิดให้บริการ (Operating Days) รายช่วงเวลา"
       description: กำหนดวันเปิดให้บริการรายสัปดาห์ (1=จันทร์ … 7=อาทิตย์) สำหรับแต่ละช่วงเวลาของบริการ (Full Replace)
       operationId: staffSyncServiceTimeSlotDays
       requestBody:
@@ -1074,9 +1074,9 @@ paths:
 
     put:
       tags: ["3. Service Management"]
-      summary: "[HC Admin / Super Admin] ผูกหมอ/เจ้าหน้าที่ที่เลือกได้เข้ากับบริการ"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] ผูกหมอ/เจ้าหน้าที่ที่เลือกได้เข้ากับบริการ"
       description: |
-        กำหนดรายชื่อหมอที่ผู้ป่วยเลือกได้ (Selectable Staff) สำหรับบริการที่เปิด allow_staff_selection
+        กำหนดรายชื่อหมอที่ผู้รับบริการเลือกได้ (Selectable Staff) สำหรับบริการที่เปิด allow_staff_selection
         - ส่ง staff_ids = [] เพื่อถอดทั้งหมด
         - แต่ละคนต้องเป็นบุคลากรของศูนย์เดียวกับบริการ และอยู่ในหมวดหมู่เดียวกับบริการ
         - แกะหมอที่มีคิว CONFIRMED ในอนาคตค้างอยู่ไม่ได้ (422)
@@ -1117,7 +1117,7 @@ paths:
   /v1/staff/admin/time-slots:
     get:
       tags: ["4. Time Slot Master"]
-      summary: "[HC Admin / Super Admin] รายชื่อช่วงเวลาของศูนย์เดียว"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] รายชื่อช่วงเวลาของศูนย์เดียว"
       description: |
         เรียงตาม sort_order
         - HC_ADMIN: ไม่ต้องส่งศูนย์ ได้ศูนย์ตัวเอง
@@ -1152,7 +1152,7 @@ paths:
 
     post:
       tags: ["4. Time Slot Master"]
-      summary: "[Super Admin] เพิ่มช่วงเวลาให้บริการใหม่"
+      summary: "[ผู้ดูแลระบบ] เพิ่มช่วงเวลาให้บริการใหม่"
       description: |
         เพิ่ม time slot ใหม่ให้ศูนย์สุขภาพ (label และ sort_order คำนวณอัตโนมัติ)
         - SUPER_ADMIN เท่านั้น
@@ -1197,7 +1197,7 @@ paths:
 
     put:
       tags: ["4. Time Slot Master"]
-      summary: "[Super Admin] แก้ไขช่วงเวลาให้บริการ"
+      summary: "[ผู้ดูแลระบบ] แก้ไขช่วงเวลาให้บริการ"
       description: |
         แก้ไข time slot (start_time, end_time, is_active)
         - SUPER_ADMIN เท่านั้น
@@ -1238,7 +1238,7 @@ paths:
 
     delete:
       tags: ["4. Time Slot Master"]
-      summary: "[Super Admin] ลบช่วงเวลาให้บริการ (ไม่รองรับ — ใช้ปิดใช้งานแทน)"
+      summary: "[ผู้ดูแลระบบ] ลบช่วงเวลาให้บริการ (ไม่รองรับ — ใช้ปิดใช้งานแทน)"
       description: |
         **ไม่รองรับการลบช่วงเวลา** — endpoint นี้เก็บไว้เพื่อให้ client ที่ยังเรียกอยู่ได้รับคำแนะนำที่แก้ตามได้ แทนที่จะเจอ 405
         - ตอบ 422 **ทุกกรณี** ไม่ว่าจะมีนัดหมายอ้างอิงหรือไม่
@@ -1272,7 +1272,7 @@ paths:
 
     patch:
       tags: ["4. Time Slot Master"]
-      summary: "[HC Admin / Super Admin] เปิด/ปิดใช้งานช่วงเวลา (is_active)"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] เปิด/ปิดใช้งานช่วงเวลา (is_active)"
       description: |
         **นี่คือวิธีที่ถูกต้องแทนการลบช่วงเวลา** — เมื่อปิด ช่วงเวลาจะหายจากผู้รับบริการทันทีทุกบริการของศูนย์ แต่วันให้บริการที่ตั้งไว้กับช่วงเวลานี้ **ไม่ถูกลบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
         - HC_ADMIN: เฉพาะศูนย์ตัวเอง (ข้ามศูนย์ไม่ได้ — 404)
@@ -1437,14 +1437,14 @@ paths:
 
     post:
       tags: ["5. Roster & Staff Leave"]
-      summary: "[Staff / HC Admin / Super Admin] บันทึกวันลา (Auto-approved / Idempotent)"
+      summary: "[เจ้าหน้าที่ / ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] บันทึกวันลา (Auto-approved / Idempotent)"
       description: |
         HC_ADMIN ลงให้ลูกน้องในศูนย์; STAFF ลงให้ตนเองเท่านั้น; SUPER_ADMIN ลงให้ใครก็ได้ (ระบุ health_center_id)
         ลงซ้ำวันเดิม → idempotent (200 ถ้ามีอยู่แล้ว, 201 ถ้าเพิ่งสร้าง)
         Guard (422): ถ้ามีคิว CONFIRMED ของคนนั้นในวันลานั้น ต้องจัดการคิวก่อน
         Auto-link: ถ้าเจ้าหน้าที่คนนั้นยังไม่ถูกลิงก์กับโปรไฟล์หมอ (staff) ที่ศูนย์ → ระบบลิงก์ให้อัตโนมัติ
         เมื่อระบุตัวได้ไม่กำกวม (โปรไฟล์ไม่ลิงก์ของศูนย์นั้นคนเดียว หรือตรงหมวดหมู่บริการที่ได้รับมอบหมาย)
-        เพื่อให้วันลาถูกกรองในหน้าจองผู้ป่วยจริง
+        เพื่อให้วันลาถูกกรองในหน้าจองผู้รับบริการจริง
       operationId: staffCreateLeave
       requestBody:
         required: true
@@ -1522,7 +1522,7 @@ paths:
 
     delete:
       tags: ["5. Roster & Staff Leave"]
-      summary: "[Staff / HC Admin / Super Admin] ยกเลิกวันลา"
+      summary: "[เจ้าหน้าที่ / ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] ยกเลิกวันลา"
       description: |
         STAFF: เฉพาะวันลาของตัวเอง; HC_ADMIN: ของศูนย์ตัวเอง;
         SUPER_ADMIN: ของใครก็ได้ (ระบุ health_center_id)
@@ -1640,7 +1640,7 @@ paths:
   /v1/staff/appointments/walk-in:
     post:
       tags: ["6. Appointment & Queue"]
-      summary: "[STAFF] ออกคิว Walk-in ณ จุดบริการ (สร้างแทนผู้ป่วย)"
+      summary: "[STAFF] ออกคิว Walk-in ณ จุดบริการ (สร้างแทนผู้รับบริการ)"
       description: |
         เงื่อนไขปฏิเสธ (422): ศูนย์ปิดรับจอง, ไม่ได้ Operating Days, หมอลาทั้งหมด/หมอที่ส่งลา, ศูนย์เต็ม ฯลฯ
         - บริการที่เปิดเลือกหมอ: ต้องส่ง staff_id (ผูก, ACTIVE, ไม่ลา, ยังไม่เต็ม) → 422 ถ้าไม่ผ่าน
@@ -1684,7 +1684,7 @@ paths:
   /v1/patient/appointments:
     get:
       tags: ["6. Appointment & Queue"]
-      summary: "[Patient] ประวัตินัดหมายของผู้ป่วยปัจจุบัน"
+      summary: "[Patient] ประวัตินัดหมายของผู้รับบริการปัจจุบัน"
       operationId: patientListAppointments
       parameters:
         - name: per_page
@@ -1748,7 +1748,7 @@ paths:
       description: |
         ยกเลิกได้เฉพาะ CONFIRMED และยังยกเลิกทัน:
         - นัดวันหลัง → ทั้งวัน; นัดวันนี้ → เฉพาะก่อนช่วงเวลาสิ้นสุด (end_time); เลยแล้ว/ไม่ใช่ของเรา → 404
-        เหตุผลเริ่มต้น (ถ้าไม่ระบุ): "ผู้ป่วยขอยกเลิกเองผ่านระบบ"
+        เหตุผลเริ่มต้น (ถ้าไม่ระบุ): "ผู้รับบริการขอยกเลิกเองผ่านระบบ"
         ถ้าศูนย์อยู่ในสถานะ CLOSING: หลัง cancel จะ trigger auto-close job (ปิดศูนย์เป็น INACTIVE เมื่อไม่มีคิว CONFIRMED เหลือ)
       operationId: patientCancelAppointment
       requestBody:
@@ -1971,7 +1971,7 @@ paths:
   /v1/staff/admin/patients:
     get:
       tags: ["7. Patient Data & PDPA Privacy"]
-      summary: "[HC Admin / Super Admin] ค้นหาและดูรายชื่อผู้รับบริการ"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] ค้นหาและดูรายชื่อผู้รับบริการ"
       operationId: adminListPatients
       parameters:
         - name: q
@@ -2091,7 +2091,7 @@ paths:
 
     patch:
       tags: ["7. Patient Data & PDPA Privacy"]
-      summary: "[HC Admin / Super Admin] แก้ไขข้อมูลผู้รับบริการแบบเต็มรูปแบบ"
+      summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] แก้ไขข้อมูลผู้รับบริการแบบเต็มรูปแบบ"
       description: แก้ไข Name, DOB, Gender, CID, Address (STAFF ได้ 403)
       operationId: staffUpdatePatientProfile
       requestBody:
@@ -2102,7 +2102,7 @@ paths:
               $ref: "#/components/schemas/UpdatePatientProfileRequest"
       responses:
         "200":
-          description: OK — คืนข้อมูลผู้ป่วยแบบ unmask
+          description: OK — คืนข้อมูลผู้รับบริการแบบ unmask
           content:
             application/json:
               schema:
@@ -2130,12 +2130,12 @@ paths:
 
     post:
       tags: ["7. Patient Data & PDPA Privacy"]
-      summary: "[Staff All] เปิดเผยข้อมูลผู้ป่วยจริง (PDPA Audit Trigger)"
-      description: เปิดเผย CID, ชื่อ, เบอร์โทร จริงของผู้ป่วย และบันทึก Audit Log เสมอ — Throttle 10 req/min (throttle:unmask)
+      summary: "[Staff All] เปิดเผยข้อมูลผู้รับบริการจริง (PDPA Audit Trigger)"
+      description: เปิดเผย CID, ชื่อ, เบอร์โทร จริงของผู้รับบริการ และบันทึก Audit Log เสมอ — Throttle 10 req/min (throttle:unmask)
       operationId: staffUnmaskPatient
       responses:
         "200":
-          description: OK — ข้อมูลผู้ป่วย unmask
+          description: OK — ข้อมูลผู้รับบริการ unmask
           content:
             application/json:
               schema:
@@ -2146,7 +2146,7 @@ paths:
                       patient:
                         $ref: "#/components/schemas/UnmaskedPatient"
         "403":
-          description: ไม่มีสิทธิ์ (นัดหมายไม่ใช่ของ รพ.สต. นี้)
+          description: ไม่มีสิทธิ์ (นัดหมายไม่ใช่ของ ศูนย์สุขภาพ นี้)
           content:
             application/json:
               schema:
@@ -2161,7 +2161,7 @@ paths:
   /v1/staff/discord/webhook:
     patch:
       tags: ["8. System Integrations"]
-      summary: "[Super Admin] ตั้งค่า/ลบ Discord Webhook ของ รพ.สต."
+      summary: "[ผู้ดูแลระบบ] ตั้งค่า/ลบ Discord Webhook ของ ศูนย์สุขภาพ"
       description: ส่ง URL เพื่อตั้งค่า หรือส่ง null เพื่อลบ
       operationId: staffUpdateDiscordWebhook
       requestBody:
@@ -2188,7 +2188,7 @@ paths:
                         properties:
                           health_center:
                             type: string
-                            example: "รพ.สต. บ้านดงแสน"
+                            example: "ศูนย์สุขภาพ บ้านดงแสน"
                           webhook_url_set:
                             type: boolean
         "422":
@@ -2225,7 +2225,7 @@ components:
       required: false
       schema:
         type: integer
-      description: กรองตาม รพ.สต. (SUPER_ADMIN เท่านั้น — role อื่นถูกจำกัดที่ รพ.สต. ของตัวเองโดยอัตโนมัติ)
+      description: กรองตาม ศูนย์สุขภาพ (SUPER_ADMIN เท่านั้น — role อื่นถูกจำกัดที่ ศูนย์สุขภาพ ของตัวเองโดยอัตโนมัติ)
     HealthCenterIdRequired:
       name: health_center_id
       in: query
@@ -2486,7 +2486,7 @@ components:
         health_center:
           type: object
           nullable: true
-          description: รพ.สต. ต้นสังกัด (null = SUPER_ADMIN ที่ไม่มีศูนย์ประจำ)
+          description: ศูนย์สุขภาพ ต้นสังกัด (null = SUPER_ADMIN ที่ไม่มีศูนย์ประจำ)
           properties:
             id:
               type: integer
@@ -2509,7 +2509,7 @@ components:
             - $ref: "#/components/schemas/HealthCenter"
             - type: object
               nullable: true
-          description: รพ.สต. ต้นสังกัด (null = SUPER_ADMIN)
+          description: ศูนย์สุขภาพ ต้นสังกัด (null = SUPER_ADMIN)
         roles:
           type: array
           items:
@@ -2599,6 +2599,7 @@ components:
           nullable: true
         is_primary:
           type: boolean
+          description: สิทธิหลักของผู้รับบริการหนึ่งคนมีได้เพียงรายการเดียว (ฐานข้อมูลบังคับด้วย unique index)
         card_number:
           type: string
           nullable: true
@@ -2624,7 +2625,7 @@ components:
 
     UnmaskedPatient:
       type: object
-      description: ข้อมูลจริงของผู้ป่วย (endpoint มี audit log — UNMASK_PATIENT_DATA)
+      description: ข้อมูลจริงของผู้รับบริการ (endpoint มี audit log — UNMASK_PATIENT_DATA)
       properties:
         id:
           type: integer
@@ -2649,7 +2650,7 @@ components:
           description: ที่อยู่เต็ม (full_address)
         rights:
           type: array
-          description: สิทธิการรักษาของผู้ป่วย (โหลด right_type ด้วย)
+          description: สิทธิการรักษาของผู้รับบริการ (โหลด right_type ด้วย)
           items:
             $ref: "#/components/schemas/PatientRight"
 
@@ -2725,7 +2726,7 @@ components:
           type: boolean
         allow_staff_selection:
           type: boolean
-          description: เปิด/ปิดให้ผู้ป่วยเลือกหมอ/เจ้าหน้าที่ (เปิดได้เฉพาะ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว)
+          description: เปิด/ปิดให้ผู้รับบริการเลือกหมอ/เจ้าหน้าที่ (เปิดได้เฉพาะ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว)
         category:
           $ref: "#/components/schemas/Category"
         capacity:
@@ -2750,7 +2751,7 @@ components:
             $ref: "#/components/schemas/StaffSummary"
         selectable_staff:
           type: array
-          description: หมอ/เจ้าหน้าที่ที่ผู้ป่วยเลือกได้ (service_staff) — มีเฉพาะเมื่อโหลดมาใน response
+          description: หมอ/เจ้าหน้าที่ที่ผู้รับบริการเลือกได้ (service_staff) — มีเฉพาะเมื่อโหลดมาใน response
           items:
             $ref: "#/components/schemas/SelectableStaffWithStatus"
 
@@ -2884,7 +2885,7 @@ components:
         booked_by_type:
           type: string
           enum: [SELF, STAFF]
-          description: วิธีการจอง (SELF = ผู้ป่วยจองเอง / STAFF = เจ้าหน้าที่ออกคิว walk-in ให้)
+          description: วิธีการจอง (SELF = ผู้รับบริการจองเอง / STAFF = เจ้าหน้าที่ออกคิว walk-in ให้)
         appointment_date:
           type: string
           format: date
@@ -2935,7 +2936,7 @@ components:
           example: "Q-001"
         health_center:
           type: string
-          example: "รพ.สต. บ้านดงแสน"
+          example: "ศูนย์สุขภาพ บ้านดงแสน"
         service_name:
           type: string
           example: "ตรวจสุขภาพทั่วไป"
@@ -2969,7 +2970,7 @@ components:
           example: "51010"
         name:
           type: string
-          example: "รพ.สต. บ้านดงแสน"
+          example: "ศูนย์สุขภาพ บ้านดงแสน"
         phone_number:
           type: string
           nullable: true
@@ -3033,7 +3034,7 @@ components:
         status:
           type: string
           enum: [ACTIVE, CLOSING, INACTIVE]
-          description: สถานะศูนย์ (ACTIVE / CLOSING — หน้าผู้ป่วยจะได้ 404 ถ้า INACTIVE)
+          description: สถานะศูนย์ (ACTIVE / CLOSING — หน้าผู้รับบริการจะได้ 404 ถ้า INACTIVE)
 
     StaffHealthCenterDropdown:
       type: object
@@ -3095,7 +3096,7 @@ components:
           maximum: 180
           nullable: true
       example:
-        name: "รพ.สต.ท่าพระ"
+        name: "ศูนย์สุขภาพท่าพระ"
         phone_number: "024111111"
         province: "กรุงเทพมหานคร"
         latitude: 13.7346
@@ -3179,7 +3180,7 @@ components:
         allow_staff_selection:
           type: boolean
           description: |
-            เปิด/ปิดให้ผู้ป่วยเลือกหมอ — เปิดได้เฉพาะ services ที่ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว (service_staff);
+            เปิด/ปิดให้ผู้รับบริการเลือกหมอ — เปิดได้เฉพาะ services ที่ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว (service_staff);
             การปิดต้องไม่มีคิว CONFIRMED ในอนาคตที่ผูกกับหมอไว้ (422)
         max_per_slot:
           type: integer
@@ -3211,7 +3212,7 @@ components:
     PatientServiceBrief:
       type: object
       description: |
-        บริการแบบย่อสำหรับหน้าจองผู้ป่วย (patient center services) — capacity แบบครอบคลุม + time_slots จาก Service::slotsWithDays();
+        บริการแบบย่อสำหรับหน้าจองผู้รับบริการ (patient center services) — capacity แบบครอบคลุม + time_slots จาก Service::slotsWithDays();
         มี allow_staff_selection สำหรับสลับ UI; category / capacity ผ่าน Resource (ไม่มี created_at / updated_at)
       properties:
         id:
@@ -3226,7 +3227,7 @@ components:
           enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
         allow_staff_selection:
           type: boolean
-          description: เปิด/ปิดให้ผู้ป่วยเลือกหมอ/เจ้าหน้าที่สำหรับบริการนี้
+          description: เปิด/ปิดให้ผู้รับบริการเลือกหมอ/เจ้าหน้าที่สำหรับบริการนี้
         category:
           $ref: "#/components/schemas/Category"
         capacity:
@@ -3276,7 +3277,7 @@ components:
           description: ID ของผู้ใช้ (STAFF) ที่ลางาน
         health_center_id:
           type: integer
-          description: รพ.สต. ต้นสังกัดของวันลา
+          description: ศูนย์สุขภาพ ต้นสังกัดของวันลา
         created_by:
           type: integer
           nullable: true
@@ -3326,7 +3327,7 @@ components:
         staff_ids:
           type: array
           description: |
-            รายการ staff_id ของหมอ/เจ้าหน้าที่ที่ผู้ป่วยเลือกได้ ([] = ถอดทั้งหมด)
+            รายการ staff_id ของหมอ/เจ้าหน้าที่ที่ผู้รับบริการเลือกได้ ([] = ถอดทั้งหมด)
             - ต้องเป็นบุคลากรของศูนย์เดียวกับบริการ และหมวดหมู่เดียวกับบริการ (มิฉะนั้น 422)
             - แกะหมอที่มีคิว CONFIRMED ในอนาคตค้างอยู่ไม่ได้ (422)
           items:
@@ -3489,7 +3490,7 @@ components:
       type: object
       description: |
         ข้อมูลผู้ใช้ (AdminUserResource) — whitelist ไม่มี created_at / updated_at /
-        ไม่ expose discord_webhook_url ของ รพ.สต.
+        ไม่ expose discord_webhook_url ของ ศูนย์สุขภาพ
         roles เป็น array ของชื่อ role (string)
       properties:
         id:
@@ -3512,7 +3513,7 @@ components:
             - $ref: "#/components/schemas/HealthCenter"
             - type: object
               nullable: true
-          description: รพ.สต. ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
+          description: ศูนย์สุขภาพ ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
         roles:
           type: array
           description: ชื่อ role ทั้งหมดของผู้ใช้ (pluck) — array ของ string
