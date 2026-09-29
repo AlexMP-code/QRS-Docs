@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: QRS - Queue Reservation System API
   description: |
-    ระบบจัดการคิวสำรองนัดหมาย รพ.สต. จ.ลำพูน
+    ระบบจัดการคิวสำรองนัดหมาย ศูนย์สุขภาพ จ.ลำพูน
     Queue Reservation System for 71 Health Centers in Lamphun Province
 
     ## Authentication
@@ -10,8 +10,8 @@ info:
     - **Patient**: Phone Number + Birth Date → Bearer Token (Sanctum)
 
     ## Role-Based Access
-    - `SUPER_ADMIN` (role_id=1) — ผู้ดูแลระบบระดับจังหวัด จัดการทุกอย่างทุก รพ.สต. (cross-tenant)
-    - `HEALTH_CENTER_ADMIN` (role_id=2) — ผู้ดูแล รพ.สต. จัดการข้อมูลของตัวเอง
+    - `SUPER_ADMIN` (role_id=1) — ผู้ดูแลระบบระดับจังหวัด จัดการทุกอย่างทุก ศูนย์สุขภาพ (cross-tenant)
+    - `HEALTH_CENTER_ADMIN` (role_id=2) — ผู้ดูแล ศูนย์สุขภาพ จัดการข้อมูลของตัวเอง
     - `STAFF` (role_id=3) — เจ้าหน้าที่ห้องตรวจ จัดการคิว/นัดของตัวเอง
     - `patient` — ประชาชน / ผู้รับบริการ
 
@@ -47,7 +47,7 @@ security:
 tags:
   - name: Public
     description: |
-      ไม่ต้องยืนยันตัวตน — login ของ staff/patient, ค้นหาบริการ/รพ.สต.
+      ไม่ต้องยืนยันตัวตน — login ของ staff/patient, ค้นหาบริการ/ศูนย์สุขภาพ
     x-roles: []
   - name: Staff (ทุกบทบาท)
     x-roles: [SUPER_ADMIN, HEALTH_CENTER_ADMIN, STAFF]
@@ -59,7 +59,7 @@ tags:
       จัดการข้อมูลศูนย์ — CRUD บริการ, มอบหมายเจ้าหน้าที่, จัดการเวร,
       ลงวันลาลูกน้อง, จัดการผู้ใช้ (SUPER_ADMIN ต้องระบุ health_center_id),
       ดูช่วงเวลาให้บริการ (Time Slots), ผูกหมอที่เลือกได้กับบริการ
-      และเปิด/ปิดให้ผู้ป่วยเลือกหมอ (allow_staff_selection)
+      และเปิด/ปิดให้ผู้รับบริการเลือกหมอ (allow_staff_selection)
       รวมถึงย้ายคิวไปหมอคนอื่น (reassign-staff)
   - name: SUPER_ADMIN
     x-roles: [SUPER_ADMIN]
@@ -124,8 +124,8 @@ paths:
         "403":
           description: |
             ไม่สามารถเข้าสู่ระบบได้ —
-            ยังไม่ได้ผูกกับ รพ.สต. (ยกเว้น SUPER_ADMIN) หรือ
-            รพ.สต. ของบัญชีมีสถานะ INACTIVE (CLOSING ยัง login ได้ — ให้ staff จัดการคิวที่เหลือ)
+            ยังไม่ได้ผูกกับ ศูนย์สุขภาพ (ยกเว้น SUPER_ADMIN) หรือ
+            ศูนย์สุขภาพ ของบัญชีมีสถานะ INACTIVE (CLOSING ยัง login ได้ — ให้ staff จัดการคิวที่เหลือ)
         "429":
           description: |
             พยายามเข้าสู่ระบบมากเกินไป (throttle:staff) — 5 ครั้ง/30 นาที key by username+IP
@@ -268,7 +268,7 @@ paths:
   /v1/patient/nearby-centers:
     post:
       tags: [Public]
-      summary: ค้นหา รพ.สต. ใกล้เคียง
+      summary: ค้นหา ศูนย์สุขภาพ ใกล้เคียง
       description: คำนวณระยะทางด้วย Haversine formula
       operationId: patientSearchNearby
       requestBody:
@@ -317,7 +317,7 @@ paths:
   /v1/patient/health-centers/{id}:
     get:
       tags: [Public]
-      summary: รายละเอียด รพ.สต. (ชื่อ, ที่อยู่, พิกัด)
+      summary: รายละเอียด ศูนย์สุขภาพ (ชื่อ, ที่อยู่, พิกัด)
       operationId: patientGetCenterDetail
       parameters:
         - name: id
@@ -345,7 +345,7 @@ paths:
   /v1/patient/health-centers/{id}/services:
     get:
       tags: [Public]
-      summary: บริการทั้งหมดของ รพ.สต. (dropdown เลือกบริการ)
+      summary: บริการทั้งหมดของ ศูนย์สุขภาพ (dropdown เลือกบริการ)
       operationId: patientGetCenterServices
       parameters:
         - name: id
@@ -551,7 +551,7 @@ paths:
   /v1/staff/services:
     get:
       tags: [Staff (ทุกบทบาท)]
-      summary: รายการบริการทั้งหมดของ รพ.สต.
+      summary: รายการบริการทั้งหมดของ ศูนย์สุขภาพ
       description: |
         ถ้าระบุ date → ซ่อนบริการที่ไม่มี staff ว่างวันนั้น
         (staff-selection → หมอที่เลือกได้ลาทั้งหมด; ปกติ → staff มอบหมายลาทั้งหมด)
@@ -759,9 +759,9 @@ paths:
 
     post:
       tags: [Staff (ทุกบทบาท)]
-      summary: เปิดเผยข้อมูลผู้ป่วย (PDPA Audit)
+      summary: เปิดเผยข้อมูลผู้รับบริการ (PDPA Audit)
       description: |
-        เปิดเผยข้อมูลจริงของผู้ป่วย (CID, ชื่อ, เบอร์โทร)
+        เปิดเผยข้อมูลจริงของผู้รับบริการ (CID, ชื่อ, เบอร์โทร)
         ทุกครั้งจะถูกบันทึกใน audit_logs (staff_id, ip, user_agent)
         Throttle: 10 req/min ต่อผู้ใช้ (throttle:unmask)
       operationId: staffUnmaskPatient
@@ -776,7 +776,7 @@ paths:
                   description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
       responses:
         "200":
-          description: OK — ข้อมูลผู้ป่วย
+          description: OK — ข้อมูลผู้รับบริการ
           content:
             application/json:
               schema:
@@ -787,7 +787,7 @@ paths:
                       patient:
                         $ref: "#/components/schemas/UnmaskedPatient"
         "404":
-          description: ไม่พบข้อมูล — นัดหมายไม่ใช่ของ รพ.สต. ที่ระบุ
+          description: ไม่พบข้อมูล — นัดหมายไม่ใช่ของ ศูนย์สุขภาพ ที่ระบุ
           content:
             application/json:
               schema:
@@ -876,8 +876,8 @@ paths:
         เจ้าหน้าที่แก้ไขเบอร์โทรให้ผู้รับบริการ (เช่น กรณีปลดซิม / เปลี่ยนเบอร์ใหม่)
 
         ข้อกำหนด:
-        - Patient ต้องมีประวัติคิวที่ รพ.สต. เป้าหมายอย่างน้อย 1 ครั้ง (tenant isolation)
-        - STAFF / HC_ADMIN — ใช้ รพ.สต. ของตัวเองโดยอัตโนมัติ
+        - Patient ต้องมีประวัติคิวที่ ศูนย์สุขภาพ เป้าหมายอย่างน้อย 1 ครั้ง (tenant isolation)
+        - STAFF / HC_ADMIN — ใช้ ศูนย์สุขภาพ ของตัวเองโดยอัตโนมัติ
         - SUPER_ADMIN — ต้องระบุ health_center_id ใน body เสมอ
         - เบอร์โทรคือ credentials สำหรับ login จึงต้องไม่ซ้ำกับผู้รับบริการท่านอื่น
         - ทุกการเปลี่ยนถูกบันทึก audit_logs (UPDATE_PATIENT_CONTACT — เก็บเบอร์เก่า/ใหม่แบบ masked)
@@ -933,7 +933,7 @@ paths:
         - เลือกแก้ไขได้เฉพาะ field ที่ส่ง (partial update) — ส่งเฉพาะ field ที่ต้องการเปลี่ยน
         - `cid` แก้ไขได้เฉพาะกรณีพิมพ์ผิด (13 หลัก, ต้อง unique)
         - `phone_number` ไม่สามารถแก้ไขผ่าน endpoint นี้ — ใช้ `PATCH /v1/staff/patients/{id}/contact` (เป็น credentials ในการ login)
-        - HEALTH_CENTER_ADMIN — ผู้ป่วยต้องมีประวัติคิวที่ศูนย์ของตัวเองอย่างน้อย 1 ครั้ง (tenant isolation)
+        - HEALTH_CENTER_ADMIN — ผู้รับบริการต้องมีประวัติคิวที่ศูนย์ของตัวเองอย่างน้อย 1 ครั้ง (tenant isolation)
         - SUPER_ADMIN — ต้องระบุ health_center_id ใน body เสมอ
         - ทุกการแก้ไขถูกบันทึก audit_logs (UPDATE_PATIENT_PROFILE — เก็บค่าก่อน/หลังแบบ masked)
       operationId: staffUpdatePatientProfile
@@ -945,7 +945,7 @@ paths:
               $ref: "#/components/schemas/UpdatePatientProfileRequest"
       responses:
         "200":
-          description: OK — คืนข้อมูลผู้ป่วยแบบ unmask ทุก field
+          description: OK — คืนข้อมูลผู้รับบริการแบบ unmask ทุก field
           content:
             application/json:
               schema:
@@ -1014,7 +1014,7 @@ paths:
         Auto-link: ถ้ายังไม่มีการลิงก์โปรไฟล์หมอ (staff) กับบัญชีเจ้าหน้าที่คนนั้น
         ระบบจะลิงก์ให้อัตโนมัติเมื่อระบุตัวได้ไม่กำกวม (โปรไฟล์ที่ยังไม่ลิงก์ของศูนย์นั้นแค่ profile เดียว
         หรือตรงกับหมวดหมู่ของบริการที่เจ้าหน้าที่ได้รับมอบหมาย) — ทำให้วันลาของหมอใน roster
-        ถูกนำไปกรองจริงในหน้าจองของผู้ป่วย (`/v1/patient/available-slots`)
+        ถูกนำไปกรองจริงในหน้าจองของผู้รับบริการ (`/v1/patient/available-slots`)
       operationId: staffCreateLeave
       requestBody:
         required: true
@@ -1337,7 +1337,7 @@ paths:
       tags: [HEALTH_CENTER_ADMIN]
       summary: ผูกหมอ/เจ้าหน้าที่ที่เลือกได้เข้ากับบริการ (Selectable Staff)
       description: |
-        กำหนดรายชื่อหมอที่ผู้ป่วยเลือกได้ ประจำบริการที่เปิด allow_staff_selection
+        กำหนดรายชื่อหมอที่ผู้รับบริการเลือกได้ ประจำบริการที่เปิด allow_staff_selection
 
         สิทธิ์: HEALTH_CENTER_ADMIN (ศูนย์ตัวเอง) / SUPER_ADMIN (ต้องระบุ health_center_id)
 
@@ -1444,7 +1444,7 @@ paths:
           in: query
           schema:
             type: integer
-          description: กรองตาม รพ.สต.
+          description: กรองตาม ศูนย์สุขภาพ
         - name: status
           in: query
           schema:
@@ -1580,14 +1580,14 @@ paths:
         **Soft delete** — ผู้ใช้ถูกลบแบบ soft (ตั้ง `deleted_at`) และไม่มี endpoint กู้คืน:
         - บัญชีหายจากรายชื่อผู้ใช้ และ login ไม่ได้อีกต่อไป
         - บุคลากรใน roster ของบัญชีถูกตัดออก: `staff.user_id` → null, `staff.status` → INACTIVE (ยังอยู่ใน roster)
-        - เลิกผูกบริการที่ผู้ป่วยเลือกได้ (`service_user`) และเพิกถอน token (Sanctum) ทั้งหมด
+        - เลิกผูกบริการที่ผู้รับบริการเลือกได้ (`service_user`) และเพิกถอน token (Sanctum) ทั้งหมด
         - เก็บประวัติ `user_roles` / `staff_leaves` / `audit_logs` ไว้; username/email เดิมไม่ถูกนำมาใช้ซ้ำ
 
         Guard ที่ห้ามลบ (422):
         - ลบบัญชีของตนเอง → "ไม่สามารถลบบัญชีของตนเองได้"
         - ลบ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE → "ไม่สามารถลบบัญชี SUPER_ADMIN คนสุดท้ายได้"
         - บัญชีมีคิว CONFIRMED ในอนาคต (วันนี้เป็นต้นไป) ผูกกับบุคลากรใน roster → "ไม่สามารถลบบัญชีผู้ใช้ได้ เนื่องจากมีคิวที่จองไว้แล้ว N คิว กรุณาจัดการคิวก่อน"
-        - HC_ADMIN พยายามลบ SUPER_ADMIN → 403 "ไม่สามารถลบบัญชี Super Admin ได้"
+        - HC_ADMIN พยายามลบ SUPER_ADMIN → 403 "ไม่สามารถลบบัญชีผู้ดูแลระบบได้"
 
         ทุกการลบสำเร็จถูกบันทึก audit_logs (`USER_DELETED` — username, name, health_center_id, staff_ids)
       operationId: adminDeleteUser
@@ -1722,7 +1722,7 @@ paths:
   /v1/staff/admin/health-centers:
     get:
       tags: [SUPER_ADMIN]
-      summary: รายชื่อ รพ.สต. ทั้งหมด (ทุก status) พร้อมค้นหา/กรอง — SUPER_ADMIN เท่านั้น
+      summary: รายชื่อ ศูนย์สุขภาพ ทั้งหมด (ทุก status) พร้อมค้นหา/กรอง — SUPER_ADMIN เท่านั้น
       operationId: adminListHealthCenters
       parameters:
         - name: q
@@ -1782,7 +1782,7 @@ paths:
   /v1/staff/health-centers:
     get:
       tags: [Staff (ทุกบทบาท)]
-      summary: รายชื่อ รพ.สต. (dropdown สำหรับ walk-in / จัดการผู้ใช้ / แก้ไขศูนย์) — role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN
+      summary: รายชื่อ ศูนย์สุขภาพ (dropdown สำหรับ walk-in / จัดการผู้ใช้ / แก้ไขศูนย์) — role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN
       description: |
         เฉพาะ staff token (STAFF / HC_ADMIN / SUPER_ADMIN) — Patient token → 403
         SUPER_ADMIN: เห็นทุกศูนย์ **แบบรายละเอียดเต็ม** (รวมถึงศูนย์ที่ปิดสมบูรณ์ INACTIVE) —ไม่ต้องส่ง health_center_id
@@ -1819,7 +1819,7 @@ paths:
 
     patch:
       tags: [HEALTH_CENTER_ADMIN]
-      summary: แก้ไขข้อมูล รพ.สต. (ชื่อ, ที่อยู่, พิกัด / SUPER_ADMIN เพิ่มรหัสศูนย์)
+      summary: แก้ไขข้อมูล ศูนย์สุขภาพ (ชื่อ, ที่อยู่, พิกัด / SUPER_ADMIN เพิ่มรหัสศูนย์)
       description: |
         แก้ไขข้อมูลศูนย์บริการสุขภาพแบบ full-profile (partial update — ส่งเฉพาะ field ที่ต้องการ)
 
@@ -1885,8 +1885,8 @@ paths:
 
         สถานะ 3 ระดับ:
         - ACTIVE: เปิดรับจอง
-        - CLOSING: ปิดรับการจองใหม่ แต่ยังให้บริกร (เคลียร์คิวที่ค้าง) — ผู้ป่วย/เจ้าหน้าที่ยังเห็นและจัดการคิวค้างได้
-        - INACTIVE: ปิดสมบูรณ์ (ซ่อนจากผู้ป่วย)
+        - CLOSING: ปิดรับการจองใหม่ แต่ยังให้บริกร (เคลียร์คิวที่ค้าง) — ผู้รับบริการ/เจ้าหน้าที่ยังเห็นและจัดการคิวค้างได้
+        - INACTIVE: ปิดสมบูรณ์ (ซ่อนจากผู้รับบริการ)
 
         ผลการสลับ (toggle):
         - ACTIVE → CLOSING (เริ่มปิดรับจอง)
@@ -1936,10 +1936,10 @@ paths:
   /v1/staff/discord/webhook:
     patch:
       tags: [SUPER_ADMIN]
-      summary: ตั้งค่า/ลบ Discord Webhook ของ รพ.สต.
+      summary: ตั้งค่า/ลบ Discord Webhook ของ ศูนย์สุขภาพ
       description: |
         ตั้งค่า Discord Webhook URL สำหรับรับแจ้งเตือนนัดหมายใหม่
-        - ระบุ health_center_id เพื่อเลือก รพ.สต. ที่จะแก้ (cross-tenant)
+        - ระบุ health_center_id เพื่อเลือก ศูนย์สุขภาพ ที่จะแก้ (cross-tenant)
         - ส่ง null เพื่อลบ webhook
       operationId: staffUpdateDiscordWebhook
       requestBody:
@@ -1966,7 +1966,7 @@ paths:
                         properties:
                           health_center:
                             type: string
-                            example: "รพ.สต. บ้านดงแสน"
+                            example: "ศูนย์สุขภาพ บ้านดงแสน"
                           webhook_url_set:
                             type: boolean
                             description: true = มี webhook, false = ลบแล้ว
@@ -2180,8 +2180,19 @@ paths:
   /v1/staff/appointments/walk-in:
     post:
       tags: [Staff (ทุกบทบาท)]
-      summary: ออกคิว Walk-in (เจ้าหน้าที่สร้างแทนผู้ป่วย)
+      summary: นัดหมายเดินเข้ารับบริการ (เจ้าหน้าที่สร้างให้ผู้รับบริการที่หน้าเคาน์เตอร์)
       description: |
+        **ข้อมูลผู้รับบริการที่เก็บไว้เหมือนการลงทะเบียน**
+        บังคับ: `cid`, `first_name`, `last_name`, `phone_number`, `birth_date`, `right_type_id`
+        ส่วนที่อยู่ จังหวัด ที่อยู่ และสถานพยาบาลหลัก เป็นข้อมูลเสริม (ไม่บังคับ)
+        จุดประสงค์คือให้ผู้รับบริการใช้ `phone_number` + `birth_date`
+        เข้าสู่ระบบเพื่อจองเองในครั้งถัดไปได้ โดยไม่ต้องลงทะเบียนซ้ำ
+
+        **ผู้รับบริการเดิม** (พบจาก `cid`): เติมเฉพาะช่องที่ยังว่าง ไม่ทับข้อมูลเดิม
+        และใช้สิทธิหลักเดิม ไม่สร้างสิทธิซ้ำ
+        ถ้า `phone_number` หรือ `birth_date` ไม่ตรงกับที่มีอยู่ → 422
+        (เพราะหมายความว่าไม่ใช่ผู้รับบริการคนเดียวกัน)
+
         เงื่อนไขปฏิเสธ (422): ศูนย์ของบริการนั้นอยู่ในสถานะไม่รับการจองใหม่ (CLOSING / INACTIVE),
         บริการ/ช่วงเวลาไม่อยู่ใน Operating Days, staff ประจำบริการลาทั้งหมด (หรือหมอที่ส่งลาทั้งหมด), ศูนย์เต็ม เป็นต้น
         - สำหรับบริการที่เปิดให้เลือกหมอ (allow_staff_selection=true): ต้องส่ง staff_id
@@ -2190,7 +2201,7 @@ paths:
         - STAFF (ไม่มี role บริหาร): ออกคิวได้เฉพาะ Services ที่ได้รับมอบหมาย — ไม่ได้รับมอบหมาย → 403 "ไม่ได้รับมอบหมายให้ให้บริการนี้"
         - SUPER_ADMIN: ต้องระบุ health_center_id ใน body (ข้ามศูนย์)
           ไม่ส่ง → 422 `{"success": false, "message": "SUPER_ADMIN ต้องระบุ health_center_id"}`
-          ส่งศูนย์ที่ไม่มีอยู่ → 404 `{"success": false, "message": "ไม่พบข้อมูลรพ.สต. ที่ระบุ"}`
+          ส่งศูนย์ที่ไม่มีอยู่ → 404 `{"success": false, "message": "ไม่พบข้อมูลศูนย์สุขภาพ ที่ระบุ"}`
         - HEALTH_CENTER_ADMIN: ไม่ต้องส่ง และถูกบังคับให้เป็นศูนย์ตนเอง
           (การส่ง `health_center_id` ของศูนย์อื่นไม่ทำให้นัดหมายไปตกศูนย์อื่น เพราะศูนย์ที่บันทึกมาจากบริการที่เลือก)
         - **ศูนย์ที่บันทึกในนัดหมายมาจากบริการที่เลือกเสมอ** ไม่ได้มาจากค่าใน body
@@ -2213,7 +2224,7 @@ paths:
                     properties:
                       message:
                         type: string
-                        example: "ออกคิว Walk-in สำเร็จ"
+                        example: "สร้างนัดหมายสำเร็จ"
                       appointment:
                         type: object
                         properties:
@@ -2384,7 +2395,7 @@ paths:
         - นัดวันหลัง → ยกเลิกได้ทั้งวัน
         - นัดวันนี้ → ยกเลิกได้เฉพาะก่อนช่วงเวลาสิ้นสุด (end_time) ของรอบนั้น
         - เลยแล้ว/ไม่ใช่คิวของเรา → 404
-        เหตุผลเริ่มต้น (ถ้าไม่ระบุ): "ผู้ป่วยขอยกเลิกเองผ่านระบบ"
+        เหตุผลเริ่มต้น (ถ้าไม่ระบุ): "ผู้รับบริการขอยกเลิกเองผ่านระบบ"
         ถ้าศูนย์อยู่ในสถานะ CLOSING: หลัง cancel จะ trigger auto-close job (ปิดศูนย์เป็น INACTIVE เมื่อไม่มีคิว CONFIRMED เหลือ)
       operationId: patientCancelAppointment
       requestBody:
@@ -2396,7 +2407,7 @@ paths:
                 reason:
                   type: string
                   maxLength: 500
-                  description: เหตุผลการยกเลิก (ถ้าไม่ระบุจะใช้ "ผู้ป่วยขอยกเลิกเองผ่านระบบ")
+                  description: เหตุผลการยกเลิก (ถ้าไม่ระบุจะใช้ "ผู้รับบริการขอยกเลิกเองผ่านระบบ")
       responses:
         "200":
           description: ยกเลิกสำเร็จ
@@ -2444,7 +2455,7 @@ components:
       required: false
       schema:
         type: integer
-      description: กรองตาม รพ.สต. (SUPER_ADMIN เท่านั้น — role อื่นถูกจำกัดที่ รพ.สต. ของตัวเองโดยอัตโนมัติ)
+      description: กรองตาม ศูนย์สุขภาพ (SUPER_ADMIN เท่านั้น — role อื่นถูกจำกัดที่ ศูนย์สุขภาพ ของตัวเองโดยอัตโนมัติ)
     HealthCenterIdRequired:
       name: health_center_id
       in: query
@@ -2705,7 +2716,7 @@ components:
         health_center:
           type: object
           nullable: true
-          description: รพ.สต. ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
+          description: ศูนย์สุขภาพ ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
           properties:
             id:
               type: integer
@@ -2728,7 +2739,7 @@ components:
             - $ref: "#/components/schemas/HealthCenter"
             - type: object
               nullable: true
-          description: รพ.สต. ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
+          description: ศูนย์สุขภาพ ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
         roles:
           type: array
           items:
@@ -2823,6 +2834,7 @@ components:
           nullable: true
         is_primary:
           type: boolean
+          description: สิทธิหลักของผู้รับบริการหนึ่งคนมีได้เพียงรายการเดียว (ฐานข้อมูลบังคับด้วย unique index)
         card_number:
           type: string
           nullable: true
@@ -2848,7 +2860,7 @@ components:
 
     UnmaskedPatient:
       type: object
-      description: ข้อมูลจริงของผู้ป่วย (endpoint มี audit log — UNMASK_PATIENT_DATA)
+      description: ข้อมูลจริงของผู้รับบริการ (endpoint มี audit log — UNMASK_PATIENT_DATA)
       properties:
         id:
           type: integer
@@ -2874,7 +2886,7 @@ components:
           description: ที่อยู่เต็ม (full_address)
         rights:
           type: array
-          description: สิทธิการรักษาของผู้ป่วย (โหลด right_type ด้วย)
+          description: สิทธิการรักษาของผู้รับบริการ (โหลด right_type ด้วย)
           items:
             $ref: "#/components/schemas/PatientRight"
 
@@ -2953,7 +2965,7 @@ components:
           enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
         allow_staff_selection:
           type: boolean
-          description: เปิด/ปิดให้ผู้ป่วยเลือกหมอ/เจ้าหน้าที่สำหรับบริการนี้
+          description: เปิด/ปิดให้ผู้รับบริการเลือกหมอ/เจ้าหน้าที่สำหรับบริการนี้
         category:
           $ref: "#/components/schemas/Category"
         capacity:
@@ -2992,7 +3004,7 @@ components:
           type: boolean
         allow_staff_selection:
           type: boolean
-          description: เปิด/ปิดให้ผู้ป่วยเลือกหมอ/เจ้าหน้าที่ (เปิดได้เฉพาะ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว)
+          description: เปิด/ปิดให้ผู้รับบริการเลือกหมอ/เจ้าหน้าที่ (เปิดได้เฉพาะ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว)
         category:
           $ref: "#/components/schemas/Category"
         capacity:
@@ -3019,7 +3031,7 @@ components:
             $ref: "#/components/schemas/StaffSummary"
         selectable_staff:
           type: array
-          description: หมอ/เจ้าหน้าที่ที่ผู้ป่วยเลือกได้ (service_staff) — มีเฉพาะเมื่อโหลดมาใน response
+          description: หมอ/เจ้าหน้าที่ที่ผู้รับบริการเลือกได้ (service_staff) — มีเฉพาะเมื่อโหลดมาใน response
           items:
             $ref: "#/components/schemas/SelectableStaffWithStatus"
 
@@ -3165,7 +3177,7 @@ components:
         booked_by_type:
           type: string
           enum: [SELF, STAFF]
-          description: วิธีการจอง (SELF = ผู้ป่วยจองเอง / STAFF = เจ้าหน้าที่ออกคิว walk-in ให้)
+          description: วิธีการจอง (SELF = ผู้รับบริการจองเอง / STAFF = เจ้าหน้าที่ออกคิว walk-in ให้)
         appointment_date:
           type: string
           format: date
@@ -3216,7 +3228,7 @@ components:
           example: "Q-001"
         health_center:
           type: string
-          example: "รพ.สต. บ้านดงแสน"
+          example: "ศูนย์สุขภาพ บ้านดงแสน"
         service_name:
           type: string
           example: "ตรวจสุขภาพทั่วไป"
@@ -3250,7 +3262,7 @@ components:
           example: "51010"
         name:
           type: string
-          example: "รพ.สต. บ้านดงแสน"
+          example: "ศูนย์สุขภาพ บ้านดงแสน"
         phone_number:
           type: string
           nullable: true
@@ -3281,7 +3293,7 @@ components:
 
     HealthCenterDetail:
       type: object
-      description: รายละเอียด รพ.สต. สำหรับหน้ารายละเอียด (ไม่รวม discord_webhook_url)
+      description: รายละเอียด ศูนย์สุขภาพ สำหรับหน้ารายละเอียด (ไม่รวม discord_webhook_url)
       properties:
         id:
           type: integer
@@ -3315,7 +3327,7 @@ components:
         status:
           type: string
           enum: [ACTIVE, CLOSING, INACTIVE]
-          description: สถานะศูนย์ (ACTIVE / CLOSING — หน้าผู้ป่วยจะได้ 404 ถ้า INACTIVE)
+          description: สถานะศูนย์ (ACTIVE / CLOSING — หน้าผู้รับบริการจะได้ 404 ถ้า INACTIVE)
 
     StaffHealthCenterDropdown:
       type: object
@@ -3344,8 +3356,8 @@ components:
         health_center_id:
           type: integer
           description: |
-            รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุให้ตรงกับ id ใน path เสมอ)
-            HEALTH_CENTER_ADMIN ไม่ต้องส่ง — ระบบใช้ รพ.สต. ของตัวเอง
+            ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุให้ตรงกับ id ใน path เสมอ)
+            HEALTH_CENTER_ADMIN ไม่ต้องส่ง — ระบบใช้ ศูนย์สุขภาพ ของตัวเอง
         code:
           type: string
           minLength: 1
@@ -3387,7 +3399,7 @@ components:
           maximum: 180
           nullable: true
       example:
-        name: "รพ.สต.ท่าพระ"
+        name: "ศูนย์สุขภาพท่าพระ"
         phone_number: "024111111"
         province: "กรุงเทพมหานคร"
         latitude: 13.7346
@@ -3425,7 +3437,7 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
         category_id:
           type: integer
         name:
@@ -3463,7 +3475,7 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
         name:
           type: string
           maxLength: 255
@@ -3477,7 +3489,7 @@ components:
         allow_staff_selection:
           type: boolean
           description: |
-            เปิด/ปิดให้ผู้ป่วยเลือกหมอ — เปิดได้เฉพาะ services ที่ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว (service_staff);
+            เปิด/ปิดให้ผู้รับบริการเลือกหมอ — เปิดได้เฉพาะ services ที่ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว (service_staff);
             การปิดต้องไม่มีคิว CONFIRMED ในอนาคตที่ผูกกับหมอไว้ (422)
         max_per_slot:
           type: integer
@@ -3517,7 +3529,7 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ; HC_ADMIN ไม่ต้องส่ง — ใช้ศูนย์ของตัวเอง)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ; HC_ADMIN ไม่ต้องส่ง — ใช้ศูนย์ของตัวเอง)
         time_slots:
           type: array
           minItems: 1
@@ -3544,7 +3556,7 @@ components:
           description: ID ของผู้ใช้ (STAFF) ที่ลางาน
         health_center_id:
           type: integer
-          description: รพ.สต. ต้นสังกัดของวันลา
+          description: ศูนย์สุขภาพ ต้นสังกัดของวันลา
         created_by:
           type: integer
           nullable: true
@@ -3565,7 +3577,7 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุ)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุ)
         staff_user_id:
           type: integer
           description: ID เจ้าหน้าที่ (STAFF ลงให้ตัวเอง, HC_ADMIN ลงให้ลูกน้อง)
@@ -3584,7 +3596,7 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
         user_ids:
           type: array
           description: รายการ user_id ของ STAFF ที่ต้องมอบหมาย ([] = ถอดทั้งหมด)
@@ -3594,15 +3606,15 @@ components:
     SyncServiceStaffRequest:
       type: object
       required: [staff_ids]
-      description: ผูก/ถอด หมอ/เจ้าหน้าที่ที่ผู้ป่วยเลือกได้ (Selectable Staff) ประจำบริการ
+      description: ผูก/ถอด หมอ/เจ้าหน้าที่ที่ผู้รับบริการเลือกได้ (Selectable Staff) ประจำบริการ
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ; HC_ADMIN ไม่ต้องส่ง — ใช้ศูนย์ของตัวเอง)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ; HC_ADMIN ไม่ต้องส่ง — ใช้ศูนย์ของตัวเอง)
         staff_ids:
           type: array
           description: |
-            รายการ staff_id ของหมอ/เจ้าหน้าที่ที่ผู้ป่วยเลือกได้ ([] = ถอดทั้งหมด)
+            รายการ staff_id ของหมอ/เจ้าหน้าที่ที่ผู้รับบริการเลือกได้ ([] = ถอดทั้งหมด)
             - ต้องเป็นบุคลากรของศูนย์เดียวกันกับบริการ และอยู่ในหมวดหมู่เดียวกับบริการ (422)
             - แกะหมอที่มีคิว CONFIRMED ในอนาคตค้างอยู่ไม่ได้ (422)
           items:
@@ -3614,24 +3626,28 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
         staff_id:
           type: integer
           description: ID หมอ/เจ้าหน้าที่คนใหม่ (ต้องผูกกับ service_staff ของบริการในคิวนี้)
 
     WalkInBookingRequest:
       type: object
-      required: [cid, first_name, last_name, phone_number, birth_date, service_id, time_slot_id]
+      required: [cid, first_name, last_name, phone_number, birth_date, right_type_id, service_id, time_slot_id]
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
         cid:
           type: string
           minLength: 13
           maxLength: 13
-          description: เลขบัตรประชาชน 13 หลัก
-          example: "1234567890123"
+          pattern: "^[0-9]{13}$"
+          description: |
+            เลขบัตรประชาชน 13 หลัก (ตัวเลขล้วน)
+            ถ้าเป็นผู้รับบริการเดิม: ใช้เลขนี้ค้นหา และเบอร์โทรกับวันเกิดต้องตรงกับที่มีอยู่
+            ไม่ตรง → 422 (เพราะอาจไม่ใช่คนเดียวกัน)
+          example: "5100000000011"
         first_name:
           type: string
           maxLength: 100
@@ -3641,25 +3657,63 @@ components:
         phone_number:
           type: string
           pattern: "^[0-9]{10}$"
+          description: |
+            เบอร์โทรศัพท์ 10 หลัก
+            ใช้คู่กับวันเกิดเป็นตัวยืนยันตัวตนของผู้รับบริการในการเข้าสู่ระบบครั้งถัดไป
           example: "0812345678"
         birth_date:
           type: string
           format: date
+          description: วันเดือนปีเกิด ใช้ยืนยันตัวตนคู่กับเบอร์โทรศัพท์
           example: "1990-01-15"
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+          nullable: true
+        subdistrict:
+          type: string
+          maxLength: 100
+          nullable: true
+        district:
+          type: string
+          maxLength: 100
+          nullable: true
+        province:
+          type: string
+          maxLength: 100
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+        right_type_id:
+          type: integer
+          description: |
+            ID ของประเภทสิทธิการรักษา (บังคับเหมือนการลงทะเบียน)
+            ผู้รับบริการใหม่: ระบบสร้างสิทธิหลักให้จากค่านี้
+            ผู้รับบริการเดิมที่มีสิทธิหลักแล้ว: ใช้สิทธิหลักเดิม ไม่สร้างซ้ำ
+        main_hospital_name:
+          type: string
+          maxLength: 255
+          nullable: true
         service_id:
           type: integer
-          description: ต้องเป็นบริการของ รพ.สต. ต้นสังกัด และต้องเปิดให้บริการในวันนัดหมาย
+          description: ต้องเป็นบริการของ ศูนย์สุขภาพ ต้นสังกัด และต้องเปิดให้บริการในวันนัดหมาย
         time_slot_id:
           type: integer
           description: ต้องเป็น time slot ที่เชื่อมกับ service นี้ และต้องเป็นวันที่เปิดให้บริการ (อยู่ใน Operating Days) ของบริการ/ช่วงเวลานั้น
         staff_id:
           type: integer
           nullable: true
-          description: ID หมอ/เจ้าหน้าที่ที่ออกคิวให้ (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
+          description: |
+            ID บุคลากรที่ให้บริการ (required เมื่อบริการ allow_staff_selection=true)
+            ต้องผูกกับ service_staff ของบริการนี้ และต้อง ACTIVE ไม่ลา และยังไม่เต็ม
+            ถ้าบริการไม่ได้เปิดให้เลือกบุคลากร: ไม่ต้องส่ง และระบบจัดสรรให้เอง
         patient_right_id:
           type: integer
           nullable: true
-          description: ID ของสิทธิ์การรักษา (ต้องเป็นของผู้ป่วยคนนี้)
+          description: |
+            ID ของสิทธิการรักษาที่ต้องการใช้ (ต้องเป็นของผู้รับบริการคนนี้)
+            ไม่ส่ง → ใช้สิทธิหลักของผู้รับบริการ
 
     UpdateStatusRequest:
       type: object
@@ -3667,7 +3721,7 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
         status:
           type: string
           enum: [COMPLETED, CANCELLED, NO_SHOW]
@@ -3705,7 +3759,7 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
         category_id:
           type: integer
           nullable: true
@@ -3725,7 +3779,7 @@ components:
       properties:
         health_center_id:
           type: integer
-          description: ระบุ รพ.สต. ที่จะแก้ webhook (SUPER_ADMIN เท่านั้น)
+          description: ระบุ ศูนย์สุขภาพ ที่จะแก้ webhook (SUPER_ADMIN เท่านั้น)
         webhook_url:
           type: string
           nullable: true
@@ -3799,7 +3853,7 @@ components:
       type: object
       description: |
         ข้อมูลผู้ใช้ (AdminUserResource) — whitelist ไม่มี created_at / updated_at /
-        ไม่ expose discord_webhook_url ของ รพ.สต.
+        ไม่ expose discord_webhook_url ของ ศูนย์สุขภาพ
         roles เป็น array ของชื่อ role (string)
       properties:
         id:
@@ -3822,7 +3876,7 @@ components:
             - $ref: "#/components/schemas/HealthCenter"
             - type: object
               nullable: true
-          description: รพ.สต. ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
+          description: ศูนย์สุขภาพ ต้นสังกัด (null สำหรับ SUPER_ADMIN กลาง)
         roles:
           type: array
           description: ชื่อ role ทั้งหมดของผู้ใช้ (pluck) — array ของ string
@@ -3836,7 +3890,7 @@ components:
         health_center_id:
           type: integer
           nullable: true
-          description: ID รพ.สต. (null = SUPER_ADMIN กลาง)
+          description: ID ศูนย์สุขภาพ (null = SUPER_ADMIN กลาง)
         name:
           type: string
           maxLength: 255
@@ -3915,8 +3969,8 @@ components:
         health_center_id:
           type: integer
           description: |
-            รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
-            STAFF / HEALTH_CENTER_ADMIN ไม่ต้องส่ง — ระบบใช้ รพ.สต. ของตัวเอง
+            ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+            STAFF / HEALTH_CENTER_ADMIN ไม่ต้องส่ง — ระบบใช้ ศูนย์สุขภาพ ของตัวเอง
 
     UpdatePatientProfileRequest:
       type: object
@@ -3927,8 +3981,8 @@ components:
         health_center_id:
           type: integer
           description: |
-            รพ.สต. เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
-            HEALTH_CENTER_ADMIN ไม่ต้องส่ง — ระบบใช้ รพ.สต. ของตัวเอง
+            ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+            HEALTH_CENTER_ADMIN ไม่ต้องส่ง — ระบบใช้ ศูนย์สุขภาพ ของตัวเอง
         first_name:
           type: string
           maxLength: 100
