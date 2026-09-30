@@ -834,8 +834,14 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
     post:
-      tags: [Staff (ทุกบทบาท)]
-      summary: เพิ่มบุคลากร
+      tags: [HC Admin, Super Admin]
+      summary: เพิ่มโปรไฟล์บุคลากรให้บัญชีที่มีอยู่แล้ว
+      description: |
+        เพิ่มโปรไฟล์บุคลากรให้บัญชีเจ้าหน้าที่ที่มีอยู่แล้วแต่ยังไม่มีโปรไฟล์
+        - STAFF (เจ้าหน้าที่ปฏิบัติงาน) ถูกปฏิเสธ (403) — การเพิ่มบุคลากรเป็นอำนาจของผู้ดูแลศูนย์
+        - `user_id` ต้องเป็นบัญชีที่ยังไม่ถูกลบและยังไม่เคยมีโปรไฟล์ (422)
+        - ศูนย์สุขภาพมาจากบัญชีเจ้าของเสมอ ไม่รับ `health_center_id` จากผู้เรียก
+        - ผู้ดูแลศูนย์ที่ยืมบัญชีของอีกศูนย์มา → 404
       operationId: staffCreateRoster
       requestBody:
         required: true
@@ -855,6 +861,10 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/StaffMember"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -1011,10 +1021,10 @@ paths:
         ลงซ้ำวันเดิม → idempotent (ไม่ error; คืน 200 ถ้ามีอยู่แล้ว, 201 ถ้าเพิ่งสร้าง)
         Guard (422): ถ้าเจ้าหน้าที่คนนั้นมีคิว CONFIRMED ในวันลานั้น
         → "ไม่สามารถลงวันลาได้ เนื่องจากมีคิวที่จองไว้แล้ว N คิวในวันนี้"
-        Auto-link: ถ้ายังไม่มีการลิงก์โปรไฟล์หมอ (staff) กับบัญชีเจ้าหน้าที่คนนั้น
-        ระบบจะลิงก์ให้อัตโนมัติเมื่อระบุตัวได้ไม่กำกวม (โปรไฟล์ที่ยังไม่ลิงก์ของศูนย์นั้นแค่ profile เดียว
-        หรือตรงกับหมวดหมู่ของบริการที่เจ้าหน้าที่ได้รับมอบหมาย) — ทำให้วันลาของหมอใน roster
-        ถูกนำไปกรองจริงในหน้าจองของผู้รับบริการ (`/v1/patient/available-slots`)
+        Guard (422): ถ้าบัญชีนั้นยังไม่มีโปรไฟล์บุคลากรในศูนย์นั้น
+        → "บัญชีนี้ยังไม่มีโปรไฟล์บุคลากรในศูนย์สุขภาพนี้ กรุณาเพิ่มโปรไฟล์ก่อนลงวันลา"
+        ระบบไม่เดาว่าบัญชีไหนคือบุคลากรคนไหน: การผูกบัญชีกับโปรไฟล์เกิดได้เฉพาะตอนสร้างบัญชี
+        หรือตอนเพิ่มโปรไฟล์ที่ระบุ `user_id` เท่านั้น การลงวันลาไม่ผูกอะไร
       operationId: staffCreateLeave
       requestBody:
         required: true
@@ -1493,9 +1503,15 @@ paths:
 
     post:
       tags: [HEALTH_CENTER_ADMIN]
-      summary: สร้างผู้ใช้ใหม่ (role_ids ได้เฉพาะ STAFF)
+      summary: สร้างบัญชีพร้อมโปรไฟล์บุคลากร (role_ids ได้เฉพาะ STAFF)
       description: |
-        ทุกการสร้างสำเร็จถูกบันทึก audit_logs (`USER_CREATED` — username, name, health_center_id, role_ids)
+        สร้างบัญชีเจ้าหน้าที่พร้อมโปรไฟล์บุคลากรใน transaction เดียว
+        เพราะทุกบัญชีที่สร้างต้องระบุว่าเป็นบุคลากรคนไหน
+        - ต้องระบุ `name` (ชื่อบุคลากร), `category_id`, `position`, `role_ids`
+        - `role_ids` ห้ามว่าง (422)
+        - `health_center_id` ต้องไม่ว่าง (422) — ทุกบัญชีต้องมีศูนย์ เพราะโปรไฟล์บุคลากรต้องอยู่ในศูนย์
+        - HC_ADMIN สร้างได้เฉพาะ role STAFF และบังคับศูนย์ของตัวเอง
+        ทุกการสร้างสำเร็จถูกบันทึก audit_logs (`USER_CREATED` — username, name, health_center_id, role_ids, staff_id)
       operationId: adminCreateUser
       requestBody:
         required: true
@@ -1540,7 +1556,10 @@ paths:
         HC_ADMIN: อัปเดตเฉพาะผู้ใช้ในศูนย์ตัวเอง, role_ids จำกัดเฉพาะ STAFF,
         ไม่สามารถแก้ไข SUPER_ADMIN หรือย้ายผู้ใช้ข้ามศูนย์ได้
         - แก้ไขบัญชีที่ถูกลบไปแล้ว (soft delete) → 404 "ไม่พบผู้ใช้ที่ระบุ"
-        - ถอด role SUPER_ADMIN หรือตั้ง status = INACTIVE ให้ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE → 422 "ไม่สามารถแก้ไขบัญชี SUPER_ADMIN คนสุดท้ายได้"
+        - **ให้หรือถอด `HEALTH_CENTER_ADMIN` ได้เฉพาะ SUPER_ADMIN** (403 ถ้า HC_ADMIN พยายามเปลี่ยนบทบาทนี้) — HC_ADMIN แก้ข้อมูลอื่นของผู้ดูแลศูนย์ได้ถ้ายังคงบทบาทนั้นไว้
+        - ถอด role `HEALTH_CENTER_ADMIN` หรือตั้ง status = INACTIVE ให้ผู้ดูแลศูนย์คนสุดท้ายที่ยัง ACTIVE ในศูนย์นั้น → 422
+        - `role_ids` ห้ามว่าง (422)
+        - เปลี่ยนรหัสผ่าน หรือตั้ง status = INACTIVE → ลบ token ทั้งหมดของบัญชีนั้นทันที; แก้ชื่อหรือเบอร์โทรไม่ลบ token
         - ทุกการแก้ไขสำเร็จถูกบันทึก audit_logs (`USER_UPDATED` — เก็บ name/status/role_ids ก่อน-หลัง)
       operationId: adminUpdateUser
       requestBody:
@@ -1581,11 +1600,12 @@ paths:
         - บัญชีหายจากรายชื่อผู้ใช้ และ login ไม่ได้อีกต่อไป
         - บุคลากรใน roster ของบัญชีถูกตัดออก: `staff.user_id` → null, `staff.status` → INACTIVE (ยังอยู่ใน roster)
         - เลิกผูกบริการที่ผู้รับบริการเลือกได้ (`service_user`) และเพิกถอน token (Sanctum) ทั้งหมด
-        - เก็บประวัติ `user_roles` / `staff_leaves` / `audit_logs` ไว้; username/email เดิมไม่ถูกนำมาใช้ซ้ำ
+        - เก็บประวัติ `user_roles` / `staff_leaves` / `audit_logs` ไว้; username เดิมถูกสงวนถาวร ใช้ซ้ำไม่ได้
 
         Guard ที่ห้ามลบ (422):
         - ลบบัญชีของตนเอง → "ไม่สามารถลบบัญชีของตนเองได้"
         - ลบ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE → "ไม่สามารถลบบัญชี SUPER_ADMIN คนสุดท้ายได้"
+        - ลบผู้ดูแลศูนย์คนสุดท้ายที่ยัง ACTIVE ในศูนย์นั้น → "ไม่สามารถถอดหรือปิดผู้ดูแลศูนย์คนสุดท้ายของศูนย์สุขภาพนี้ได้" (การลบเป็นการถอดบทบาทและปิดบัญชีพร้อมกัน และกู้คืนไม่ได้)
         - บัญชีมีคิว CONFIRMED ในอนาคต (วันนี้เป็นต้นไป) ผูกกับบุคลากรใน roster → "ไม่สามารถลบบัญชีผู้ใช้ได้ เนื่องจากมีคิวที่จองไว้แล้ว N คิว กรุณาจัดการคิวก่อน"
         - HC_ADMIN พยายามลบ SUPER_ADMIN → 403 "ไม่สามารถลบบัญชีผู้ดูแลระบบได้"
 
@@ -3797,11 +3817,14 @@ components:
 
     CreateStaffMemberRequest:
       type: object
-      required: [name, status]
+      required: [user_id, name, status]
       properties:
-        health_center_id:
+        user_id:
           type: integer
-          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: >
+            บัญชีเจ้าของโปรไฟล์ ต้องยังไม่ถูกลบและยังไม่เคยมีโปรไฟล์บุคลากร
+            ศูนย์สุขภาพของโปรไฟล์มาจากบัญชีนี้อัตโนมัติ
+          example: 42
         category_id:
           type: integer
           nullable: true
@@ -3927,19 +3950,29 @@ components:
 
     StoreUserRequest:
       type: object
-      required: [name, username, password, role_ids]
+      required: [name, username, password, role_ids, category_id]
       properties:
         health_center_id:
           type: integer
-          nullable: true
-          description: ID ศูนย์สุขภาพ (null = SUPER_ADMIN กลาง)
+          description: >
+            ID ศูนย์สุขภาพ — ต้องไม่ว่าง เพราะทุกบัญชีต้องมีโปรไฟล์บุคลากร
+            และโปรไฟล์ต้องอยู่ในศูนย์ (ส่ง null = 422)
         name:
           type: string
           maxLength: 255
+          description: ชื่อบุคลากร (ใช้สร้างโปรไฟล์บุคลากรพร้อมกัน)
+        category_id:
+          type: integer
+          description: หมวดหมู่ของบุคลากร (ใช้สร้างโปรไฟล์บุคลากรพร้อมกัน)
+        position:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: ตำแหน่งของบุคลากร
         username:
           type: string
           maxLength: 50
-          description: ต้องไม่ซ้ำ
+          description: ต้องไม่ซ้ำ (รวมชื่อของบัญชีที่ soft delete แล้ว)
         email:
           type: string
           format: email
@@ -3958,7 +3991,9 @@ components:
           minItems: 1
           items:
             type: integer
-          description: _ids ของ roles (1=SUPER_ADMIN, 2=HEALTH_CENTER_ADMIN, 3=STAFF)
+          description: >
+            _ids ของ roles (1=SUPER_ADMIN, 2=HEALTH_CENTER_ADMIN, 3=STAFF)
+            หนึ่งบัญชีถือได้หลายบทบาทพร้อมกัน — เช่น ผู้ดูแลศูนย์ที่ให้บริการเอง
         status:
           type: string
           enum: [ACTIVE, INACTIVE]
