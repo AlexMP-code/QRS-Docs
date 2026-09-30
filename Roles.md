@@ -18,6 +18,14 @@
 | 3 | `STAFF` | `role:staff` | User | เจ้าหน้าที่ห้องตรวจ / หมอ / ผู้ช่วย — scope: ศูนย์ของตนเอง |
 | 4 | *(ไม่มี DB role)* | `role:patient` | Patient | ผู้รับบริการ / ผู้รับบริการ |
 
+**หมายเหตุเกี่ยวกับบทบาทกับบัญชี:**
+- บทบาท**ไม่ใช่ชนิดของบัญชี** — หนึ่งบัญชีถือได้หลายบทบาทพร้อมกัน ผู้ดูแลศูนย์ที่ให้บริการเองจะมีทั้ง `HEALTH_CENTER_ADMIN` และ `STAFF`
+- บทบาทอยู่ที่ `user_roles` (many-to-many) ไม่ใช่คอลัมน์บน `users`
+- บัญชีเจ้าหน้าที่หนึ่งบัญชีมีโปรไฟล์บุคลากรได้หนึ่งแถวเสมอ (`staff.user_id` เป็น unique)
+- การเพิ่มโปรไฟล์บุคลากรใหม่ต้องระบุ `user_id` เสมอ ระบบจะไม่เดาว่าบัญชีไหนคือบุคลากรคนนั้น
+- โปรไฟล์บุคลากรที่ยังไม่มีบัญชีเจ้าของ พบได้เฉพาะข้อมูลที่มีอยู่ก่อน และยังทำงานตามปกติ
+- ทุกบัญชีเจ้าหน้าที่ต้องมี `health_center_id` เสมอ
+
 **หมายเหตุเกี่ยวกับ middleware ที่ตรวจสิทธิ์:**
 - Staff ทุก route ถูกกำกับโดย middleware `role:STAFF,HEALTH_CENTER_ADMIN,SUPER_ADMIN` (alias `role`) ซึ่งตรวจ **DB roles** ผ่าน `User::roles()` relation (`user_roles` pivot) เท่านั้น — token ไม่มีส่วนในการตัดสิทธิ์
 - ✅ เคยมี fallback ตรวจ token abilities แต่ถอดออกแล้ว เพราะตายอยู่: token ของ staff ได้ ability `role:staff` (พิมพ์เล็ก) ขณะที่ argument ใน middleware เป็น `STAFF` (พิมพ์ใหญ่) จึงไม่มีทาง match
@@ -190,18 +198,20 @@
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
-| `GET` | `/v1/staff/roster` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูบุคลากร — `?date=` คำนวณ `effective_status=LEAVE` ถ้ามี leave วันนั้น |
-| `POST` | `/v1/staff/roster` | STAFF, HC_ADMIN, SUPER_ADMIN | เพิ่มบุคลากร — **STAFF ทำได้จริง**; status ∈ ACTIVE/INACTIVE/LEAVE |
+| `GET` | `/v1/staff/roster` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูบุคลากร — `?date=` คำนวณ `effective_status=LEAVE` ถ้ามี leave วันนั้น; โปรไฟล์ที่ไม่มีบัญชีเจ้าของจะแสดง `user_id: null` |
+| `POST` | `/v1/staff/roster` | HC_ADMIN, SUPER_ADMIN | เพิ่มบุคลากร — **STAFF ถูกปฏิเสธ (403)**; ต้องระบุ `user_id` ของบัญชีที่ยังไม่มีโปรไฟล์; ศูนย์มาจากบัญชีเจ้าของเสมอ; status ∈ ACTIVE/INACTIVE/LEAVE |
 | `PATCH` | `/v1/staff/roster/{id}/toggle-duty` | STAFF, HC_ADMIN, SUPER_ADMIN | สลับ ACTIVE ↔ LEAVE เท่านั้น (INACTIVE → 422 ห้าม); ACTIVE→LEAVE บล็อก 422 ถ้ามีคิว CONFIRMED ≥1 ตั้งแต่วันนี้ |
 
-**หมายเหตุ:** STAFF ธรรมดาสามารถเพิ่ม + สลับ duty บุคลากรคนอื่นในศูนย์เดียวกันได้ (ไม่จำกัดเฉพาะตัวเอง)
+**หมายเหตุ:**
+- STAFF ธรรมดาสลับ duty บุคลากรคนอื่นในศูนย์เดียวกันได้ (ไม่จำกัดเฉพาะตัวเอง) แต่**เพิ่มคนเข้าศูนย์ไม่ได้** เพราะการเพิ่มบุคลากรเป็นอำนาจของผู้ดูแลศูนย์
+- `POST /v1/staff/roster` ไม่รับ `health_center_id` — ระบบหาศูนย์จากบัญชีเจ้าของ ทำให้ย้ายคนข้ามศูนย์ไม่ได้ (HC_ADMIN ที่ยืมบัญชีของอีกศูนย์มา → 404 ไม่ใช่ 403 เพื่อไม่เผยว่าบัญชีนั้นมีอยู่)
 
 ### 3.7 การจัดการวันลา (Staff Leaves)
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
 | `GET` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูวันลา — filter `?date=`, `?staff_user_id=`; response ผ่าน `StaffLeaveResource` (**ไม่มี** `created_at`/`updated_at`) |
-| `POST` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ลงวันลา (auto-approved) — `leave_date >= today` (ย้อนหลังไม่ได้); บล็อกถ้ามีคิว CONFIRMED ในวันนั้น; **idempotent** (ซ้ำวันเดิมคืน row เดิม, HTTP 200); ถ้ายังไม่ลิงก์โปรไฟล์หมอกับบัญชี → **ลิงก์อัตโนมัติ** เมื่อระบุตัวได้ไม่กำกวม (ศูนย์เดียว [+ หมวดหมู่ที่ตรงกับบริการที่ได้รับมอบหมาย]; ถ้า ambiguos หลายโปรไฟล์ → ไม่เดา) เพื่อให้ระบบลาของหมอใน roster ถูกนำไปกรองในหน้าจองผู้รับบริการจริง |
+| `POST` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ลงวันลา (auto-approved) — `leave_date >= today` (ย้อนหลังไม่ได้); บล็อกถ้ามีคิว CONFIRMED ในวันนั้น; **idempotent** (ซ้ำวันเดิมคืน row เดิม, HTTP 200); บัญชีที่ยังไม่มีโปรไฟล์บุคลากรในศูนย์นั้น → **422** ให้เพิ่มโปรไฟล์ก่อน (ระบบไม่เดาว่าบัญชีไหนคือบุคลากรคนไหน) |
 | `DELETE` | `/v1/staff/leaves/{id}` | STAFF, HC_ADMIN, SUPER_ADMIN | ลบวันลา — scope ตามด้านล่าง |
 | `GET` | `/v1/staff/leaves/availability` | STAFF, HC_ADMIN, SUPER_ADMIN | เช็คว่าบริการเปิดให้บริการวันที่นั้นหรือไม่ (`service_id`+`date` บังคับ) |
 
@@ -243,12 +253,16 @@
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
 | `GET` | `/v1/staff/admin/users` | ดูผู้ใช้ — HC_ADMIN เฉพาะศูนย์ตัวเอง; SUPER_ADMIN ทุกศูนย์ (filter ได้); response ผ่าน `AdminUserResource` — `roles` เป็น array-string, **ไม่มี** `created_at`/`updated_at`/`discord_webhook_url` |
-| `POST` | `/v1/staff/admin/users` | สร้างผู้ใช้ — **HC_ADMIN จำกัด role_ids ได้เฉพาะ STAFF (422); บังคับ health_center_id ของตัวเอง**; SUPER_ADMIN สร้างได้ทุก role/ทุกศูนย์ (null ได้) |
-| `PATCH` | `/v1/staff/admin/users/{id}` | แก้ผู้ใช้ — HC_ADMIN: ห้ามแก้ SUPER_ADMIN (403); ห้ามข้ามศูนย์ (404); role STAFF เท่านั้น |
-| `DELETE` | `/v1/staff/admin/users/{id}` | ลบผู้ใช้ — ห้ามลบตัวเอง (422); HC_ADMIN ห้ามลบ SUPER_ADMIN (403); ห้ามลบคนสุดท้าย (ดู guard); ห้ามลบถ้ามีคิว CONFIRMED ตั้งแต่วันนี้; ลบแล้ว: staff status=INACTIVE + detach assignedServices + ลบ tokens + soft delete |
+| `POST` | `/v1/staff/admin/users` | สร้างบัญชี **พร้อมโปรไฟล์บุคลากรใน transaction เดียว** — ต้องระบุ `name` (ชื่อบุคลากร), `category_id`, `position`, `role_ids`; **HC_ADMIN จำกัด role_ids ได้เฉพาะ STAFF (422); บังคับ health_center_id ของตัวเอง**; SUPER_ADMIN สร้างได้ทุก role/ทุกศูนย์ แต่ `health_center_id` ต้องไม่ว่าง (422) เพราะทุกบัญชีต้องมีศูนย์ |
+| `PATCH` | `/v1/staff/admin/users/{id}` | แก้บัญชี — HC_ADMIN: ห้ามแก้ SUPER_ADMIN (403); ห้ามข้ามศูนย์ (404); **ห้ามให้หรือถอด `HEALTH_CENTER_ADMIN` (403 เฉพาะผู้ที่เปลี่ยนบทบาทนั้น)**; role_ids ห้ามว่าง |
+| `DELETE` | `/v1/staff/admin/users/{id}` | ลบบัญชี — ห้ามลบตัวเอง (422); HC_ADMIN ห้ามลบ SUPER_ADMIN (403); ห้ามลบคนสุดท้าย (ดู guard); ห้ามลบถ้ามีคิว CONFIRMED ตั้งแต่วันนี้; ลบแล้ว: ปลด `staff.user_id` + staff status=INACTIVE + detach assignedServices + ลบ tokens + soft delete (ชื่อผู้ใช้ยังถูกสงวน ใช้ซ้ำไม่ได้) |
 | `GET` | `/v1/staff/admin/roles` | ดู role — SUPER_ADMIN เห็นทั้งหมด; **HC_ADMIN เห็นเฉพาะ STAFF** |
 
 **การป้องกันผู้ดูแลระบบคนสุดท้าย:** ห้าม @ลบ / @ถอด role SUPER_ADMIN / @เปลี่ยน status เป็น INACTIVE ของ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE (เช็คผ่าน `isLastActiveSuperAdmin` — นับ user ACTIVE ที่ถือ role SUPER_ADMIN ไม่รวมตัวเอง) → 422
+
+**การป้องกันผู้ดูแลศูนย์คนสุดท้าย:** ห้าม @ถอด role `HEALTH_CENTER_ADMIN` / @เปลี่ยน status เป็น INACTIVE ของผู้ดูแลศูนย์คนสุดท้ายที่ยัง ACTIVE ในศูนย์นั้น (เช็คผ่าน `isLastActiveCenterAdmin`) → 422 เพื่อไม่ให้ศูนย์ใดตกหลักการักษา
+
+**การเพิกถอน token อัตโนมัติ:** เปลี่ยนรหัสผ่าน หรือเปลี่ยนสถานะบัญชีเป็น `INACTIVE` → ลบ token ทั้งหมดของบัญชีนั้นทันที; แก้ชื่อหรือเบอร์โทร **ไม่** ลบ token
 
 ### 4.3 การจัดการ Time Slots
 
@@ -280,7 +294,8 @@
 - ดู Dashboard / บริการ / นัด / roster / leaves / ผู้รับบริการ / health-centers แบบ**ทุกศูนย์** (ไม่ระบุ `health_center_id` = รวมทุกศูนย์)
 - **กฎหลัก:** ทุกรายการ write เฉพาะเจาะจง (service, patient, health-center, user, discord) ต้องระบุ `health_center_id` ใน request → ไม่ส่ง = **422** "SUPER_ADMIN ต้องระบุ health_center_id"; ส่งแล้วไม่มีศูนย์นั้น = 404
 - **ทุก endpoint ที่ต้องระบุศูนย์ใช้เกณฑ์เดียวกัน** แล้ว (รวม walk-in, Discord, ช่วงเวลา, วันให้บริการ) — เคยมีจุดที่เขียนตรรกะตรวจศูนย่อเองจนตอบกลับต่างจากกัน แก้แล้ว
-- **⚠️ ข้อยกเว้น:** `POST /admin/users` ให้ SUPER_ADMIN สร้าง user แบบ center null ได้
+- **⚠️ ข้อยกเว้น:** `POST /v1/staff/roster` ไม่ต้องระบุ `health_center_id` เพราะศูนย์มาจากบัญชีเจ้าของโปรไฟล์
+- **ไม่มีข้อยกเว้นสำหรับ `POST /admin/users`** — ทุกบัญชีต้องมี `health_center_id` เพราะทุกบัญชีต้องมีโปรไฟล์บุคลากร และโปรไฟล์ต้องอยู่ในศูนย์ (ส่ง null = 422) ผู้ดูแลระบบจึงยังเห็นทุกศูนย์เพราะถือบทบาท ไม่ใช่เพราะศูนย์เป็น null
 - **หมายเหตุ:** ผู้ดูแลระบบเลือกศูนย์ที่จะดูรายชื่อช่วงเวลาได้จาก `GET /v1/staff/health-centers` การดูช่วงเวลาข้ามศูนย์ในคำขอเดียวไม่มีแล้ว
 
 ### 5.2 Endpoint ที่เฉพาะผู้ดูแลระบบ
