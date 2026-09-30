@@ -1461,13 +1461,18 @@ paths:
             type: string
             enum: [ACTIVE, INACTIVE]
           description: กรองตามสถานะบัญชีผู้ใช้
-        - name: role_ids
+        - name: role_ids[]
           in: query
           schema:
             type: array
             items:
               type: integer
-          description: กรองตาม role (SUPER_ADMIN ใช้ได้; HC_ADMIN ถูกจำกัดให้เห็นเฉพาะ role STAFF ตามเดิม)
+          style: form
+          explode: true
+          description: >
+            กรองตาม role (SUPER_ADMIN ใช้ได้; HC_ADMIN ถูกจำกัดให้เห็นเฉพาะ role STAFF)
+            **ต้องใช้ชื่อพารามิเตอร์ `role_ids[]` และเรียกซ้ำได้หลายครั้ง** เช่น `?role_ids[]=3&role_ids[]=5`
+            ถ้าส่งเป็น `?role_ids=3` จะได้ 422 เพราะ Laravel มองเป็น string ไม่ใช่ array
         - name: per_page
           in: query
           schema:

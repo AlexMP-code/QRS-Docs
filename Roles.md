@@ -198,7 +198,7 @@
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
-| `GET` | `/v1/staff/roster` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูบุคลากร — `?date=` คำนวณ `effective_status=LEAVE` ถ้ามี leave วันนั้น; โปรไฟล์ที่ไม่มีบัญชีเจ้าของจะแสดง `user_id: null` |
+| `GET` | `/v1/staff/roster` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูบุคลากร — `?date=` คำนวณ `effective_status=LEAVE` ถ้ามี leave วันนั้น; โปรไฟล์ที่ไม่มีบัญชีเจ้าของจะส่ง `user: { id: null, username: null }` (ไม่มีคีย์ `user_id` ระดับบน) |
 | `POST` | `/v1/staff/roster` | HC_ADMIN, SUPER_ADMIN | เพิ่มบุคลากร — **STAFF ถูกปฏิเสธ (403)**; ต้องระบุ `user_id` ของบัญชีที่ยังไม่มีโปรไฟล์; ศูนย์มาจากบัญชีเจ้าของเสมอ; status ∈ ACTIVE/INACTIVE/LEAVE |
 | `PATCH` | `/v1/staff/roster/{id}/toggle-duty` | STAFF, HC_ADMIN, SUPER_ADMIN | สลับ ACTIVE ↔ LEAVE เท่านั้น (INACTIVE → 422 ห้าม); ACTIVE→LEAVE บล็อก 422 ถ้ามีคิว CONFIRMED ≥1 ตั้งแต่วันนี้ |
 
