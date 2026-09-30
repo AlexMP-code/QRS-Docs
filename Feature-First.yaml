@@ -8,12 +8,12 @@ info:
 
     ## Core Roles & Permissions
     - `SUPER_ADMIN` (role_id=1) — ผู้ดูแลระบบระดับจังหวัด จัดการทุกอย่างข้ามศูนย์ (cross-tenant)
-    - `HEALTH_CENTER_ADMIN` (role_id=2) — ผู้ดูแล ศูนย์สุขภาพ จัดการข้อมูลของศูนย์ตนเอง
-    - `STAFF` (role_id=3) — เจ้าหน้าที่ห้องตรวจ ออกคิว Walk-in และจัดการคิวประจำวัน
-    - `Patient` — ประชาชน / ผู้รับบริการ
+    - `HEALTH_CENTER_ADMIN` (role_id=2) — ผู้ดูแลศูนย์สุขภาพ จัดการข้อมูลของศูนย์ตนเอง **และเป็นผู้นั่งหน้าเคาน์เตอร์สร้างนัดหมายเดินเข้ารับบริการ**
+    - `STAFF` (role_id=3) — เจ้าหน้าที่ปฏิบัติงาน ให้บริการอยู่ที่จุดหนึ่ง ๆ ทำงานเฉพาะบริการที่ได้รับมอบหมาย **ไม่ออกนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์**
+    - `Patient` — ผู้รับบริการ (ยืนยันตัวตนด้วยเบอร์โทรศัพท์ + วันเดือนปีเกิด)
 
     ## Rate Limiting Constraints
-    - Staff login: 5 ครั้ง/30 นาที ⚠️ ตั้งเป้าไว้แต่ยังใช้ไม่ได้จริง — middleware `throttle.staff` (`ThrottleStaffLogin`) นับเฉพาะ HTTP 401/403 แต่ login ผิด (username/password หรือ user INACTIVE) ตอบ **422** (ValidationException) จึงเข้า `RateLimiter::clear()` แทน `hit()` → counter ไม่เคยขึ้น → ไม่มีการล็อก 30 นาทีจริง
+    - Staff login: 5 ครั้ง/30 นาที — middleware `ThrottleStaffLogin` นับทุกครั้งที่มีการพยายาม (ไม่ดูว่าคำขอจะได้รหัสตอบกลับอะไร) แล้วล้างเมื่อสำเร็จ จึงครอบคลุมทั้งกรณี login ผิดที่ตอบ 401/403 และ 422 (ValidationException)
     - Patient login: 10 req/min (key by เบอร์โทร)
     - Patient register: 5 req/min (key by IP)
     - Unmask patient data: 10 req/min (key by user)
@@ -38,15 +38,15 @@ tags:
   - name: "2. Health Center Management"
     description: ค้นหา ศูนย์สุขภาพ, ดูรายละเอียด, จัดการข้อมูลศูนย์ และสลับสถานะเปิด/ปิดรับจอง (ACTIVE/CLOSING/INACTIVE)
   - name: "3. Service Management"
-    description: จัดการบริการ (Services), มอบหมายเจ้าหน้าที่ดูแล และกำหนดวันเปิดให้บริการ (Operating Days)
+    description: จัดการบริการ (Services), มอบหมายเจ้าหน้าที่ดูแล กำหนดวันเปิดให้บริการ (Operating Days) และผูกบุคลากรที่เลือกได้
   - name: "4. Time Slot Master"
     description: "จัดการ Time Slots ราย ศูนย์สุขภาพ (เดิมตั้งไว้เป็น Master ระดับจังหวัด — จริงแล้ว per-center: time_slots ผูก health_center_id (NOT NULL, FK) + unique (health_center_id, start_time, end_time)); CRUD เฉพาะ SUPER_ADMIN (ต้องระบุศูนย์), toggle-status HC_ADMIN/SUPER_ADMIN ได้เฉพาะศูนย์ตัวเอง — ไม่มีการลบช่วงเวลา ใช้ปิดใช้งานแทน"
   - name: "5. Roster & Staff Leave"
     description: จัดการตารางปฏิบัติงาน, รายชื่อบุคลากร, สลับเวร และลงวันลา (Leave Management)
   - name: "6. Appointment & Queue"
-    description: ตรวจสอบสล็อตว่าง, จองคิวออนไลน์, ออกคิว Walk-in, เปลี่ยนสถานะคิว และดูประวัตินัดหมาย
+    description: ตรวจสอบช่วงเวลาว่าง, จองคิวออนไลน์, นัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์ (ผู้ดูแลศูนย์), เปลี่ยนสถานะคิว และดูประวัตินัดหมาย
   - name: "7. Patient Data & PDPA Privacy"
-    description: ค้นหาผู้รับบริการ, แก้ไขโปรไฟล์/เบอร์โทรผู้รับบริการ และ Unmask ข้อมูลจริง (PDPA Audit Trigger)
+    description: ค้นหาผู้รับบริการ (ด้วยเลขบัตรประชาชนเพื่อเติมฟอร์มหน้าเคาน์เตอร์ = PDPA Audit Trigger), แก้ไขโปรไฟล์/เบอร์โทรผู้รับบริการ และ Unmask ข้อมูลจริง
   - name: "8. System Integrations"
     description: ตั้งค่าการเชื่อมต่อระบบภายนอก (Discord Webhook Notifications)
 
@@ -1477,9 +1477,9 @@ paths:
       tags: ["5. Roster & Staff Leave"]
       summary: "[Staff All] ตรวจสอบความพร้อมปฏิบัติงาน ณ วันที่ระบุ"
       description: |
-        เช็คความพร้อมก่อนเปิด Walk-in / จอง — available: true/false
-        - allow_staff_selection=true → true เมื่อหมอที่เลือกได้ (service_staff, ACTIVE, ไม่ลา) ≥ 1
-        - allow_staff_selection=false → true เมื่อ staff มอบหมาย (service_user) ≥ 1 คนไม่ลาวันนั้น
+        เช็คความพร้อมก่อนเปิดนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์ / การจอง — available: true/false
+        - allow_staff_selection=true → true เมื่อบุคลากรที่เลือกได้ (service_staff, ACTIVE, ไม่ลา) ≥ 1
+        - allow_staff_selection=false → true เมื่อผู้รับผิดชอบบริการ (service_user) ≥ 1 คนไม่ลาวันนั้น
       operationId: staffCheckAvailability
       parameters:
         - name: service_id
@@ -1640,10 +1640,20 @@ paths:
   /v1/staff/appointments/walk-in:
     post:
       tags: ["6. Appointment & Queue"]
-      summary: "[STAFF] ออกคิว Walk-in ณ จุดบริการ (สร้างแทนผู้รับบริการ)"
+      summary: "[HC_ADMIN, SUPER_ADMIN] นัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์"
       description: |
-        เงื่อนไขปฏิเสธ (422): ศูนย์ปิดรับจอง, ไม่ได้ Operating Days, หมอลาทั้งหมด/หมอที่ส่งลา, ศูนย์เต็ม ฯลฯ
-        - บริการที่เปิดเลือกหมอ: ต้องส่ง staff_id (ผูก, ACTIVE, ไม่ลา, ยังไม่เต็ม) → 422 ถ้าไม่ผ่าน
+        **ผู้เรียกได้**: `HEALTH_CENTER_ADMIN` (ศูนย์ของตน) และ `SUPER_ADMIN` (ต้องระบุ `health_center_id`)
+        เจ้าหน้าที่ปฏิบัติงาน (`STAFF`) เรียกไม่ได้ → 403 เพราะหน้าที่นี้เป็นของผู้ดูแลศูนย์
+        ผู้ดูแลศูนย์ถือตารางเวลาและบุคลากรของศูนย์ทั้งหมด จึงออกนัดหมายได้ทุกบริการโดยไม่ต้องได้รับมอบหมาย
+
+        **ก่อนกรอก**: ค้นด้วย `GET /v1/staff/admin/patients?cid=...` เพื่อเติมฟอร์ม
+        การค้นด้วยเลขบัตรประชาชนไม่จำกัดศูนย์ (ผู้รับบริการไม่ได้เป็นของศูนย์ใด)
+        และเขียน Audit Log `LOOKUP_PATIENT_BY_CID` เมื่อพบผู้รับบริการ
+
+        เงื่อนไขปฏิเสธ (422): ศูนย์ปิดรับจอง, ไม่ได้ Operating Days, บุคลากรลาทั้งหมด, ศูนย์เต็ม ฯลฯ
+        - บริการที่เปิดให้เลือกบุคลากร: ต้องส่ง staff_id (ผูก, ACTIVE, ไม่ลา, ยังไม่เต็ม) → 422 ถ้าไม่ผ่าน
+        - `right_type_id` **ไม่บังคับ** — ไม่ส่ง = นัดหมายไม่มีสิทธิการรักษาผูกไว้ (ต้องเป็นประเภท `status=ACTIVE`)
+        - เบอร์โทรที่ถูกผูกกับผู้รับบริการคนอื่นอยู่แล้ว → 422 พร้อมเลขบัตรประชาชนเจ้าของเบอร์
         - booked_by_type = STAFF เสมอ
       operationId: staffWalkInBooking
       requestBody:
@@ -1680,6 +1690,12 @@ paths:
           $ref: "#/components/responses/ValidationError"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: เจ้าหน้าที่ปฏิบัติงานเรียกไม่ได้ (หน้าที่ของผู้ดูแลศูนย์)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /v1/patient/appointments:
     get:
@@ -1897,12 +1913,14 @@ paths:
 
     patch:
       tags: ["6. Appointment & Queue"]
-      summary: "[Staff All] ย้ายคิวไปหมอ/เจ้าหน้าที่คนอื่น"
+      summary: "[Staff All] ย้ายคิวไปบุคลากรคนอื่น"
       description: |
-        ใช้กรณีหมอคนเดิมติดภารกิจกะทันหัน — เฉพาะบริการที่เปิดให้เลือกหมอ
+        ใช้กรณีบุคลากรคนเดิมติดภารกิจกะทันหัน — เฉพาะบริการที่เปิดให้เลือกบุคลากร
         - คิวต้องยังเป็นสถานะ CONFIRMED
-        - หมอคนใหม่ต้องผูกกับบริการ (service_staff), ว่างวันนั้น (ไม่ลา) และยังไม่เต็มคิวในรอบเวลานั้น (โควตา 1 คิว/รอบ/คน)
-        - ย้ายเป็นหมอคนเดิมซ้ำไม่ได้ (422)
+        - คนใหม่ต้องผูกกับบริการ (service_staff), ว่างวันนั้น (ไม่ลา) และยังไม่เต็มคิวในรอบเวลานั้น (โควตา 1 คิว/รอบ/คน)
+        - ย้ายเป็นคนเดิมซ้ำไม่ได้ (422)
+        - **ตรวจโควตาและบันทึกอยู่ในธุรกรรมเดียวกัน** พร้อมล็อกแถวศูนย์สุขภาพและแถวนัดหมาย
+          ถ้าโควตาไม่ผ่านจะ rollback ทั้งหมด ไม่เหลือ audit ค้าง
         - ทุกการย้ายถูกบันทึก Audit Log (APPOINTMENT_STAFF_REASSIGN)
       operationId: staffReassignStaff
       requestBody:
@@ -1972,18 +1990,25 @@ paths:
     get:
       tags: ["7. Patient Data & PDPA Privacy"]
       summary: "[ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] ค้นหาและดูรายชื่อผู้รับบริการ"
+      description: |
+        สองทางที่ขอบเขตต่างกัน:
+        - `?cid=` = การยืนยันตัวตนที่หน้าเคาน์เตอร์ **ไม่จำกัดศูนย์**
+          คืนผู้รับบริการที่ลงทะเบียนไว้แม้ยังไม่เคยมาที่ศูนย์นั้น พร้อม `patient_rights`
+          เขียน Audit Log `LOOKUP_PATIENT_BY_CID` เมื่อพบ (ค้นแล้วไม่พบไม่เขียน)
+        - `?q=` / `?phone=` / `?province=` / `?district=` = ค้นในข้อมูลของศูนย์ **จำกัดศูนย์**
+          ผู้ดูแลศูนย์เห็นเฉพาะผู้ที่มีประวัติคิวที่ศูนย์ตน
       operationId: adminListPatients
       parameters:
         - name: q
           in: query
           schema:
             type: string
-          description: ค้นหาตามชื่อ/นามสกุล
+          description: ค้นหาตามชื่อ/นามสกุล (จำกัดศูนย์ — ต้องมีประวัติคิวที่ศูนย์)
         - name: cid
           in: query
           schema:
             type: string
-          description: เลขบัตรประชาชน 13 หลัก
+          description: เลขบัตรประชาชน 13 หลัก (ไม่จำกัดศูนย์ — ใช้เติมฟอร์มหน้าเคาน์เตอร์)
         - name: phone
           in: query
           schema:
@@ -2432,6 +2457,23 @@ components:
         full_address:
           type: string
           nullable: true
+        patient_rights:
+          type: array
+          description: สิทธิการรักษาที่ผู้รับบริการมี ใช้เติมฟอร์มนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              is_primary:
+                type: boolean
+              main_hospital_name:
+                type: string
+                nullable: true
+              expire_date:
+                type: string
+                format: date
+                nullable: true
         created_at:
           type: string
 
@@ -2885,7 +2927,7 @@ components:
         booked_by_type:
           type: string
           enum: [SELF, STAFF]
-          description: วิธีการจอง (SELF = ผู้รับบริการจองเอง / STAFF = เจ้าหน้าที่ออกคิว walk-in ให้)
+          description: วิธีการจอง (SELF = ผู้รับบริการจองเอง / STAFF = ผู้ดูแลศูนย์สร้างนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์)
         appointment_date:
           type: string
           format: date
@@ -3148,8 +3190,8 @@ components:
           enum: [false]
           default: false
           description: |
-            ไม่สามารถเปิดให้เลือกหมอตอนสร้างบริการได้ (value ต้องเป็น false/0)
-            - สร้างบริการก่อน → ผูกหมอที่เลือกได้ (PUT /v1/staff/services/{id}/staff) → เปิด allow_staff_selection ผ่านการแก้ไขบริการ
+            ไม่สามารถเปิดให้เลือกบุคลากรตอนสร้างบริการได้ (value ต้องเป็น false/0)
+            - สร้างบริการก่อน → ผูกบุคลากรที่เลือกได้ (PUT /v1/staff/services/{id}/staff) → เปิด allow_staff_selection ผ่านการแก้ไขบริการ
         max_per_slot:
           type: integer
           minimum: 1
@@ -3372,13 +3414,47 @@ components:
           type: integer
         time_slot_id:
           type: integer
+        right_type_id:
+          type: integer
+          nullable: true
+          description: |
+            ID ประเภทสิทธิการรักษา (ไม่บังคับ — หน้าเคาน์เตอร์ไม่ต้องถามทุกครั้ง)
+            ต้องเป็นประเภทที่ status=ACTIVE ไม่ส่ง = นัดหมายไม่มีสิทธิผูกไว้
+            ถ้าผู้รับบริการมีสิทธิหลักแล้ว ระบบใช้สิทธิเดิมและค่านี้จะไม่ถูกใช้
+        gender:
+          type: string
+          enum: [MALE, FEMALE, OTHER]
+          nullable: true
+        subdistrict:
+          type: string
+          maxLength: 100
+          nullable: true
+        district:
+          type: string
+          maxLength: 100
+          nullable: true
+        province:
+          type: string
+          maxLength: 100
+          nullable: true
+        full_address:
+          type: string
+          nullable: true
+        main_hospital_name:
+          type: string
+          maxLength: 255
+          nullable: true
         staff_id:
           type: integer
           nullable: true
-          description: ID หมอ/เจ้าหน้าที่ที่ออกคิวให้ (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
+          description: ID บุคลากรที่ให้บริการ (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
         patient_right_id:
           type: integer
           nullable: true
+          description: |
+            ID สิทธิการรักษาที่ต้องการใช้ (ต้องเป็นของผู้รับบริการคนนี้)
+            ไม่ส่ง → ใช้สิทธิหลักของผู้รับบริการ
+            ส่งมาแล้วหาไม่เจอ → 422
 
     UpdateStatusRequest:
       type: object
@@ -3407,10 +3483,13 @@ components:
         staff_id:
           type: integer
           nullable: true
-          description: ID หมอ/เจ้าหน้าที่ที่เลือก (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
+          description: ID บุคลากรที่เลือก (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
         patient_right_id:
           type: integer
           nullable: true
+          description: |
+            ID สิทธิการรักษาที่ต้องการใช้ (ต้องเป็นของผู้รับบริการคนนี้)
+            ไม่ส่ง → ใช้สิทธิหลัก ส่งมาแล้วหาไม่เจอ → 422
 
     CreateStaffMemberRequest:
       type: object
