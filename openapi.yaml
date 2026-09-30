@@ -672,6 +672,16 @@ paths:
         - CONFIRMED → COMPLETED
         - CONFIRMED → CANCELLED
         - CONFIRMED → NO_SHOW
+        - NO_SHOW (ที่ระบบเป็นคนเปลี่ยน) → COMPLETED เท่านั้น
+
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ reassign-staff และ unmask):**
+        คิวเป็นของศูนย์ แต่ "ใครทำกับคิวนี้ได้" ขึ้นกับสองเงื่อนไข เข้าได้อย่างน้อยหนึ่งทาง
+        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`)
+
+        STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403**
+        บริการที่ไม่ผูกชื่อบุคลากรจะไม่มีเงื่อนไขที่ 2
+        HC_ADMIN / SUPER_ADMIN ไม่ถูกจำกัด
       operationId: staffUpdateAppointmentStatus
       requestBody:
         required: true
@@ -693,6 +703,8 @@ paths:
                         type: string
                       data:
                         $ref: "#/components/schemas/Appointment"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -707,6 +719,11 @@ paths:
       summary: ย้ายคิวไปหมอ/เจ้าหน้าที่คนอื่น
       description: |
         ใช้กรณีหมอคนเดิมติดภารกิจกะทันหัน — เฉพาะบริการที่เปิดให้เลือกหมอ (allow_staff_selection=true)
+
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status และ unmask):**
+        STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403**
+        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`) — คนที่ให้บริการจริง
 
         ข้อกำหนด (422 ถ้าไม่ผ่าน):
         - คิวต้องยังเป็นสถานะ CONFIRMED
@@ -761,9 +778,14 @@ paths:
       tags: [Staff (ทุกบทบาท)]
       summary: เปิดเผยข้อมูลผู้รับบริการ (PDPA Audit)
       description: |
-        เปิดเผยข้อมูลจริงของผู้รับบริการ (CID, ชื่อ, เบอร์โทร)
-        ทุกครั้งจะถูกบันทึกใน audit_logs (staff_id, ip, user_agent)
+        เปิดเผยข้อมูลจริงของผู้รับบริการ (CID, ชื่อ, เบอร์โทร) — **ข้อมูลอ่อนไหวตาม PDPA**
+        ทุกครั้งที่สำเร็จจะถูกบันทึกใน audit_logs (staff_id, ip, user_agent)
         Throttle: 10 req/min ต่อผู้ใช้ (throttle:unmask)
+
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status และ reassign-staff):**
+        STAFF ที่ไม่ได้รับมอบหมายบริการของคิวนั้น และไม่ได้เป็นผู้ถูกระบุในคิว → **403**
+        การถูกปฏิเสธจะ**ไม่เขียน audit log** เพราะการเขียน log แปลว่ามีการเปิดข้อมูล ซึ่งไม่ได้เกิดขึ้น
+        HC_ADMIN / SUPER_ADMIN ไม่ถูกจำกัด
       operationId: staffUnmaskPatient
       requestBody:
         content:
@@ -786,6 +808,8 @@ paths:
                     properties:
                       patient:
                         $ref: "#/components/schemas/UnmaskedPatient"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           description: ไม่พบข้อมูล — นัดหมายไม่ใช่ของ ศูนย์สุขภาพ ที่ระบุ
           content:

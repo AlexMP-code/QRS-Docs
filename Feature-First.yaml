@@ -1903,8 +1903,19 @@ paths:
 
     patch:
       tags: ["6. Appointment & Queue"]
-      summary: "[Staff All] เปลี่ยนสถานะคิวนัดหมาย"
-      description: State machine (CONFIRMED → COMPLETED / CANCELLED / NO_SHOW)
+      summary: "[Staff ที่เข้าเงื่อนไขขอบเขต / ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] เปลี่ยนสถานะคิวนัดหมาย"
+      description: |
+        State machine (CONFIRMED → COMPLETED / CANCELLED / NO_SHOW)
+        และ NO_SHOW ที่ระบบเป็นคนเปลี่ยน → COMPLETED เท่านั้น
+
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ reassign-staff และ unmask):**
+        คิวเป็นของศูนย์ แต่ "ใครทำกับคิวนี้ได้" ขึ้นกับสองเงื่อนไข เข้าได้อย่างน้อยหนึ่งทาง
+        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`)
+
+        STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้"
+        บริการที่ไม่ผูกชื่อบุคลากรจะไม่มีเงื่อนไขที่ 2
+        การแก้ "ไม่มาตามนัด" ใช้เกณฑ์เดียวกัน ไม่มีช่องทางพิเศษ
       operationId: staffUpdateAppointmentStatus
       requestBody:
         required: true
@@ -1926,6 +1937,8 @@ paths:
                         type: string
                       data:
                         $ref: "#/components/schemas/Appointment"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -1937,9 +1950,15 @@ paths:
 
     patch:
       tags: ["6. Appointment & Queue"]
-      summary: "[Staff All] ย้ายคิวไปบุคลากรคนอื่น"
+      summary: "[Staff ที่เข้าเงื่อนไขขอบเขต / ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] ย้ายคิวไปบุคลากรคนอื่น"
       description: |
         ใช้กรณีบุคลากรคนเดิมติดภารกิจกะทันหัน — เฉพาะบริการที่เปิดให้เลือกบุคลากร
+
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status และ unmask):**
+        STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้"
+        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`) — คนที่ให้บริการจริง
+
         - คิวต้องยังเป็นสถานะ CONFIRMED
         - คนใหม่ต้องผูกกับบริการ (service_staff), ว่างวันนั้น (ไม่ลา) และยังไม่เต็มคิวในรอบเวลานั้น (โควตา 1 คิว/รอบ/คน)
         - ย้ายเป็นคนเดิมซ้ำไม่ได้ (422)
@@ -2179,8 +2198,14 @@ paths:
 
     post:
       tags: ["7. Patient Data & PDPA Privacy"]
-      summary: "[Staff All] เปิดเผยข้อมูลผู้รับบริการจริง (PDPA Audit Trigger)"
-      description: เปิดเผย CID, ชื่อ, เบอร์โทร จริงของผู้รับบริการ และบันทึก Audit Log เสมอ — Throttle 10 req/min (throttle:unmask)
+      summary: "[Staff ที่เข้าเงื่อนไขขอบเขต / ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] เปิดเผยข้อมูลผู้รับบริการจริง (PDPA Audit Trigger)"
+      description: |
+        เปิดเผย CID, ชื่อ, เบอร์โทร จริงของผู้รับบริการ — **ข้อมูลอ่อนไหวตาม PDPA**
+        และบันทึก Audit Log ทุกครั้งที่สำเร็จ — Throttle 10 req/min (throttle:unmask)
+
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status และ reassign-staff):**
+        STAFF ที่ไม่ได้รับมอบหมายบริการของคิวนั้น และไม่ได้เป็นผู้ถูกระบุในคิว → **403**
+        การถูกปฏิเสธจะไม่เขียน audit log เพราะการเขียน log แปลว่ามีการเปิดข้อมูล ซึ่งไม่ได้เกิดขึ้น
       operationId: staffUnmaskPatient
       responses:
         "200":
@@ -2195,7 +2220,7 @@ paths:
                       patient:
                         $ref: "#/components/schemas/UnmaskedPatient"
         "403":
-          description: ไม่มีสิทธิ์ (นัดหมายไม่ใช่ของ ศูนย์สุขภาพ นี้)
+          description: ไม่ได้รับมอบหมายให้ดูแลบริการนี้
           content:
             application/json:
               schema:

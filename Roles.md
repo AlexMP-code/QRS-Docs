@@ -166,9 +166,23 @@
 |---|---|---|---|
 | `GET` | `/v1/staff/appointments` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูนัดประจำวัน — ดูข้อจำกัดด้านล่าง |
 | `POST` | `/v1/staff/appointments/walk-in` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | นัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์ — STAFF → 403 |
-| `PATCH` | `/v1/staff/appointments/{id}/status` | STAFF, HC_ADMIN, SUPER_ADMIN | เปลี่ยนสถานะ — transition เดียว: CONFIRMED → COMPLETED/CANCELLED/NO_SHOW |
-| `PATCH` | `/v1/staff/appointments/{id}/reassign-staff` | STAFF, HC_ADMIN, SUPER_ADMIN | ย้ายคิวไปบุคลากรคนอื่น — เฉพาะ CONFIRMED + `allow_staff_selection`; Audit Log; ตรวจโควตาในธุรกรรมเดียวกับการบันทึก |
-| `POST` | `/v1/staff/appointments/{id}/unmask` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูข้อมูลผู้รับบริการเต็ม (PDPA Audit Log); `throttle:unmask` 10 req/min |
+| `PATCH` | `/v1/staff/appointments/{id}/status` | STAFF (เฉพาะบริการที่เข้าเงื่อนไขขอบเขต), HC_ADMIN, SUPER_ADMIN | เปลี่ยนสถานะ — transition เดียว: CONFIRMED → COMPLETED/CANCELLED/NO_SHOW; ดูข้อจำกัดการแตะคิวด้านล่าง |
+| `PATCH` | `/v1/staff/appointments/{id}/reassign-staff` | STAFF (เฉพาะบริการที่เข้าเงื่อนไขขอบเขต), HC_ADMIN, SUPER_ADMIN | ย้ายคิวไปบุคลากรคนอื่น — เฉพาะ CONFIRMED + `allow_staff_selection`; Audit Log; ตรวจโควตาในธุรกรรมเดียวกับการบันทึก |
+| `POST` | `/v1/staff/appointments/{id}/unmask` | STAFF (เฉพาะบริการที่เข้าเงื่อนไขขอบเขต), HC_ADMIN, SUPER_ADMIN | ดูข้อมูลผู้รับบริการเต็ม — **ข้อมูลอ่อนไหวตาม PDPA** (PDPA Audit Log); `throttle:unmask` 10 req/min; ดูข้อจำกัดการแตะคิวด้านล่าง |
+
+**ข้อจำกัดการแตะคิว (สิทธิ์) — ใช้เกณฑ์เดียวกันทั้งสามทาง:**
+- คิวเป็นของศูนย์ แต่ "ใครทำกับคิวนี้ได้" ขึ้นกับสองเงื่อนไข เข้าได้อย่างน้อยหนึ่งทาง
+  1. **ได้รับมอบหมายบริการนั้น** (`service_user`)
+  2. **เป็นผู้ถูกระบุในคิวนั้น** (`appointments.staff_id` → `staff.user_id`)
+- **STAFF** ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้" ทั้งการเปลี่ยนสถานะ การย้ายคิว และการถอดข้อมูลผู้รับบริการ
+- ทางที่สองมีไว้เพราะคนที่ให้บริการจริงย่อมรู้ว่าเกิดอะไรขึ้นกับคิวนั้น และบางคนไม่ได้อยู่ในบริการที่ตนถูกมอบหมาย
+- **ระดับขอบเขตคือระดับบริการ** เจ้าหน้าที่ปฏิบัติงานที่ได้รับมอบหมายบริการหนึ่ง ทำงานกับทุกคิวของบริการนั้นได้ แม้ผู้รับบริการจะเลือกบุคลากรคนอื่น
+- **บริการที่ไม่ผูกชื่อบุคลากร** (นับตามช่วงเวลา/ทั้งวัน) คิวจะไม่มีผู้ถูกระบุ → ทางที่สองใช้ไม่ได้ ต้องได้รับมอบหมายหรือเป็นผู้ดูแลศูนย์เท่านั้น
+- **HC_ADMIN / SUPER_ADMIN**: ไม่ถูกจำกัด (SUPER_ADMIN ยังทำข้ามศูนย์ได้)
+- การแก้ "ไม่มาตามนัด" ที่ระบบเป็นคนเปลี่ยน กลับเป็น "เสร็จสิ้น" ใช้เกณฑ์เดียวกัน ไม่มีช่องทางพิเศษ
+- **403 ไม่ใช่ 404** เพราะเจ้าหน้าที่ปฏิบัติงานเห็นคิวนั้นอยู่ในหน้าจออยู่แล้ว การตอบว่าไม่พบจะทำให้เขากดซ้ำโดยไม่รู้สาเหตุ
+- **การถอดข้อมูลผู้รับบริการที่ถูกปฏิเสธ จะไม่เขียน audit log** เพราะการเขียน log แปลว่ามีการเปิดข้อมูล ซึ่งไม่ได้เกิดขึ้น
+- กติกานี้อยู่ที่จุดเดียว (`StaffAppointmentController::denyIfOutOfScope`) ทุกทางที่แตะคิวต้องผ่าน — กติกาที่เขียนแยกจุดจะไม่ขยายไปทางใหม่ในอนาคต
 
 **ข้อจำกัดการมองเห็น (index) — ตามจริง:**
 - **STAFF** (ไม่มี role บริหาร): เห็นเฉพาะนัดของ **Assigned Services** (`service_user` pivot) ของตัวเอง; 403 ถ้า filter `service_id` ที่ไม่ได้รับมอบหมาย
@@ -381,7 +395,7 @@
 |---|---|---|---|
 | 1 | **Data Privacy (PDPA)** — ข้อมูลผู้รับบริการ mask เป็นค่าเริ่มต้น; Unmask/แก้ไขบันทึก Audit Log | Resource/accessor + Controller/Service | ดูตาราง Audit Log ด้านล่าง — **ไม่ใช่ทุก action ที่ mask** |
 | 2 | **Strict Multi-Tenancy** — staff จัดการเฉพาะศูนย์ตัวเอง | Trait `ResolvesHealthCenterScope` (ทุก endpoint) + Service `where(health_center_id)->findOrFail()` + DB `NOT NULL` | SUPER_ADMIN ต้องระบุศูนย์เสมอ — เคยมีข้อยกเว้นที่ช่วงเวลา แก้แล้ว |
-| 3 | **Assigned Services scope** — STAFF เห็นรายการนัดเฉพาะบริการที่ assign | Controller (`index`) | updateStatus/reassign/unmask ไม่จำกัด assigned; และ **หน้าเคาน์เตอร์ไม่ใช่ของ STAFF** (route gate + role) |
+| 3 | **Assigned Services scope** — STAFF เห็นและแตะคิวเฉพาะบริการที่ assign (หรือคิวที่ระบุชื่อเขา) | Controller (`index`) + Controller (`denyIfOutOfScope` — ทุกทางที่แตะคิว) | เดิมจำกัดแค่ `index` ทำให้ `updateStatus`/`unmask` รับเลขนัดหมายที่หน้าจอไม่เคยส่ง → สิ่งที่เห็นกับสิ่งที่ทำได้ไม่ตรงกัน; กติกาเดียวกันนี้ใช้ทั้งสามทางแล้ว และ **หน้าเคาน์เตอร์ไม่ใช่ของ STAFF** (route gate + role) |
 | 4 | **Operating Days Hard Gate** — แต่ละ (service,slot) มี `days_mask` (bit 1-7) | Request validation (book/walk-in) + `OperatingDayService::isSlotAvailableOnDate` | pivot `service_time_slot`; slot ต้อง active; **slot ต้องเป็นของศูนย์เดียวกับบริการ (บังคับทั้งโค้ดและ composite FK)** |
 | 5 | **Capacity & anti-overbooking** — นับ CONFIRMED ลดจากโควตาที่หักวันลาของวันนั้น; เลือกบุคลากร 1 คิว/รอบ/คน | `CapacityService` + `lockForUpdate` ใน transaction | ตอนกดจองส่งวันที่เข้าไปด้วย จึงได้โควตาตรงกับที่หน้าจอแสดง; ย้ายคิวก็ตรวจโควตาในธุรกรรมเดียวกับการบันทึก |
 | 6 | **Confirmed-queue guards** — ห้ามลบ/ปิดสิ่งที่กำลังมีคิว (services, staff, time-slot-days, user, leave, duty) | Service + Controller | **ช่วงเวลาไม่ลบเลย** ตาม ADR-0001 ใช้ปิดใช้งานแทน; การลบศูนย์/บริการ/ช่วงเวลาที่มีนัดหมายจะถูก FK `RESTRICT` บล็อก |
