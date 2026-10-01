@@ -548,6 +548,68 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/staff/dashboard/bundle:
+    get:
+      tags: [Staff (ทุกบทบาท)]
+      summary: หน้าจอหนึ่งจอ — สรุป คิว และรายชื่อบุคลากรในคำขอเดียว
+      description: |
+        รวม `summary` + `appointments` + `roster` ไว้ด้วยกัน เพื่อลดจำนวนคำขอของหน้าจอ
+        และให้ทุกชิ้นใช้ `date` เดียวกันเสมอ (ถ้าเรียกแยกทีละ endpoint
+        แต่ละคำขออาจได้วันที่ต่างกันและตัวเลขจะไม่ตรงกับรายการที่เห็น)
+
+        **การรวมไม่ได้เปิดสิทธิ์ให้กว้างขึ้น — ขอบเขตของแต่ละชิ้นเหมือนเดิม:**
+
+        | ชิ้น | STAFF | ผู้ดูแล |
+        |---|---|---|
+        | `summary` | นับเฉพาะบริการที่ได้รับมอบหมาย | ทั้งศูนย์ |
+        | `appointments` | เฉพาะบริการที่ได้รับมอบหมาย | ทั้งศูนย์ |
+        | `roster` | ทั้งศูนย์ | ทั้งศูนย์ |
+
+        - `summary.total` เท่ากับจำนวนใน `appointments` เสมอ
+        - `roster` เป็นทั้งศูนย์เพราะเจ้าหน้าที่ต้องเห็นว่าใครเข้าเวรหรือลาวันนี้
+        - ข้อมูลผู้รับบริการใน `appointments` ยังถูกปิดบังเหมือนเดิม — ไม่มี `cid` หรือที่อยู่
+        - `roster` คืนค่า `effective_status` (คำนวณรวมวันลา) เมื่อส่ง `date`; ไม่ส่ง `date` จะไม่มีฟิลด์นี้
+        - endpoint เดิม (`/dashboard/summary`, `/appointments`, `/roster`) ยังทำงานเหมือนเดิม
+      operationId: staffDashboardBundle
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+            example: "2026-08-21"
+          description: วันที่ต้องการดู ใช้กับทั้งสามชิ้น (ถ้าไม่ระบุ = วันนี้)
+        - $ref: "#/components/parameters/HealthCenterIdFilter"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      date:
+                        type: string
+                        format: date
+                      summary:
+                        $ref: "#/components/schemas/DashboardSummary"
+                      appointments:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Appointment"
+                      roster:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/StaffMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /v1/staff/services:
     get:
       tags: [Staff (ทุกบทบาท)]
