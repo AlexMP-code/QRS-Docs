@@ -43,11 +43,11 @@
 | 1 | ศูนย์ (ผู้รับบริการของใคร) ≠ บริการ (ใครทำงานกับคิวนี้ได้) — มี 2 ขอบเขตแยกกัน | [0.3](#03-กฎ-health_center_id-สำคัญที่สุดของระบบนี้) · [0.3a](#03a-ขอบเขตระดับบริการ-ขอบเขตที่สอง-นอกเหนือจากศูนย์) |
 | 2 | `users` = บัญชีเข้าใช้ · `staff` = โปรไฟล์คนงาน — 1:1 | [0.3b](#03b-users--บัญชี--staff--โปรไฟล์คนงาน) |
 | 3 | มีโควตาต่อนาทีทุก endpoint — ได้ 429 เมื่อชน | [B2.3](#b23-โควตาการเรียก-api-rate-limit) |
+| 4 | ตัวเลขสรุปต้องตรงกับรายการที่เห็น — ใช้ bundle เพื่อให้แน่ใจ | [B2.2](#b22-หน้าจอหนึ่งจอ--สามชิ้นในคำขอเดียว-แนะนำ) |
 
 > หมายเหตุเรื่องตัวเลข: เอกสารนี้จงใจ**ไม่บันทึกตัวเลขจำนวนศูนย์ จำนวนบริการ หรือจำนวนบทบาท**
 > เพราะเป็นค่าจากฐานข้อมูลจริงที่เปลี่ยนไปเรื่อย ๆ และเคยทำให้คนอ่านเชื่อว่าเป็นค่าปัจจุบัน
 > ให้นับจากฐานข้อมูลที่ใช้งานจริงเสมอ
-| 4 | ตัวเลขสรุปต้องตรงกับรายการที่เห็น — ใช้ bundle เพื่อให้แน่ใจ | [B2.2](#b22-หน้าจอหนึ่งจอ--สามชิ้นในคำขอเดียว-แนะนำ) |
 
 ---
 
@@ -70,7 +70,21 @@
 { "message": "ข้อความแรกที่เจอ", "errors": { "field": ["ข้อความ"] } }
 ```
 
+**ล้มเหลวจาก `BusinessRuleException`** — มี `success: false` เหมือน controller ที่ทำเอง
+แต่ข้อความมาจาก service ที่บังคับกติกาทางธุรกิจ ไม่ใช่จาก validation
+
 > ⚠️ `errors` จะมีเฉพาะ validation ระดับ Request — ดูหัวข้อ 0.6 เรื่อง error ที่ถูกกลืน
+> **client ต้องอ่าน `message` เป็นหลัก** เพราะทั้งสามแบบมี `message` แต่มีเฉพาะบางแบบที่มี `errors`
+> ถ้าอาศัยแค่ `errors` จะพลาดข้อความจาก service ทั้งหมด
+
+**404 จาก `findOrFail` มีข้อความกลางเดียว** — `"ไม่พบข้อมูลที่ระบุ"`
+ไม่ได้บอกว่าอะไรไม่พบ จึงอย่าคาดหวังข้อความเฉพาะจาก `findOrFail`
+(ส่วนที่ปฏิเสธเองด้วย `response()->json()` จะมีข้อความเฉพาะ)
+
+**500 ที่ไม่คาดคิดถูกปิดรายละเอียด** — ข้อความรวมคือ `"เกิดข้อผิดพลาดของระบบ กรุณาลองใหม่อีกครั้ง"`
+ไม่เผยรายละเอียดภายใน เพราะอาจมีโครงสร้างฐานข้อมูลติดไป
+ยกเว้น validation / authentication / authorization / throttle ที่ปล่อยให้ Laravel จัดการ
+ตั้งค่าที่ `bootstrap/app.php` (`withExceptions`)
 
 ## 0.2 Token
 
@@ -83,6 +97,7 @@
 
 - **Patient token → staff route = 403** (ไม่มี role ใน `users`)
 - **Staff token → patient route = 403** (ability ไม่ใช่ `role:patient`)
+- **ไม่มี token / token หมดอายุ → 401** ทุกฝั่ง
 
 ## 0.3 กฎ `health_center_id` (สำคัญที่สุดของระบบนี้)
 
@@ -145,14 +160,20 @@
 |---|---|---|
 | คือ | บัญชีเข้าใช้งาน (มี username/password) | โปรไฟล์คนงาน |
 | มี role | ✅ (`user_roles`) | — |
-| มี `health_center_id` | ✅ บังคับ NOT NULL (รวมผู้ดูแลระบบ) | ✅ |
-| ความสัมพันธ์ | `users.id` ↔ `staff.user_id` | **1:1** (`uq_staff_user_id` unique) |
-| ใช้ทำอะไร | login, สิทธิ์, โควตานับ | เข้าเวร, วันลา, โควตาต่อหมอ, ผูกบริการ |
+| มี `health_center_id` | ✅ บังคับ NOT NULL (รวมผู้ดูแลระบบ — ดู B12.3) | ✅ |
+| ความสัมพันธ์ | `users.id` ↔ `staff.user_id` | **1 ต่อ 1 ฝั่ง `users`** (`uq_staff_user_id` unique) |
+| ใช้ทำอะไร | login, สิทธิ์, โควตา `PER_MASSEUSE` | เข้าเวร, วันลา, โควตาต่อหมอ, ผูกบริการ |
+
+> ⚠️ **1 ต่อ 1 ฝั่ง `users`** — `users` เดียวผูกได้โปรไฟล์เดียว (unique บังคับ)
+> แต่ `staff` เดียวผูก `users` ได้หลายแถวในทางทฤษฎี (คอลัมน์ nullable ไม่มี unique ฝั่ง `staff`)
+> ระบบปกติจะไม่เกิดกรณีนี้ เพราะทุกคำขอสร้างผู้ใช้สร้างโปรไฟล์ใหม่เสมอ (B12.3) — ถ้าเจอ แปลว่ามีจุดเขียนที่หลุดธรรมชาติ
 
 - **ทุกบัญชีที่สร้างต้องมีโปรไฟล์ `staff`** — สร้างในคำขอเดียวกัน (ดู B12.3)
 - **โปรไฟล์เก่าที่ไม่มีบัญชียังทำงานได้** — `staff.user_id` เป็น nullable จึงยังให้บริการและนับโควตาได้ เขาแค่ลาไม่ได้
 - **บัญชีที่ไม่มีโปรไฟล์ ลงวันลาไม่ได้** (422) เพราะระบบไม่รู้ว่าคนนี้คือใคร การเดาจากหมวดหมู่เคยทำให้ผูกผิดคน
+- **สร้างโปรไฟล์เดิมซ้ำไม่ได้** — `uq_staff_user_id` บังคับ ถ้าบัญชีนั้นมีโปรไฟล์แล้วส่งมาใหม่ = 422 (ดู B8.2)
 - **ลบบัญชี** → โปรไฟล์ถูกตั้ง `user_id = null` + `status = INACTIVE` (ดู B12.5) ทำให้ผู้รับบริการเลือกจองเขาไม่ได้อีก
+- **เจ้าหน้าที่สร้างโปรไฟล์ผ่าน `POST /roster` จะรับ `user_id` ที่ยังไม่มีโปรไฟล์** — ทางนี้ไม่ได้สร้างบัญชีใหม่
 
 ## 0.4 `capacity_type` — 3 แบบ (กำหนดว่านับโควตายังไง)
 
@@ -160,25 +181,33 @@
 
 | ค่า | โควตาต่อรอบเวลามาจาก | ต้องส่งตอนสร้าง | ลักษณะ |
 |---|---|---|---|
-| `PER_MASSEUSE` | นับบุคลากรที่ **ผูกกับบริการนี้โดยตรง** (`service_user`) และยังให้บริการอยู่ ไม่ใช่ทั้งหมวดหมู่ | — | 1 คิว/หมอ/รอบ |
+| `PER_MASSEUSE` | นับบัญชีที่ **ถูกมอบหมายบริการนี้** (`service_user`) และยังไม่ลาวันนั้น ไม่ใช่ทั้งหมวดหมู่ | — | 1 คิว/หมอ/รอบ |
 | `PER_SLOT` | `service_capacity.max_per_slot` (ค่า default 1) | `max_per_slot` | ตายตัวต่อรอบเวลา |
 | `PER_DAY` | `service_capacity.max_per_day` (ค่า default 10) | `max_per_day` | **นับรวมทั้งวัน ไม่ล้างทุกรอบ** |
 
-> `PER_MASSEUSE` นับจากคนที่ผูกกับบริการ ไม่ใช่คนทั้งหมวดหมู่ เพราะบุคลากรในหมวดเดียวกันอาจไม่ได้รับผิดชอบบริการนี้
-> ดู `CapacityService::countAssignedStaff()` (app/Services/CapacityService.php)
+> ⚠️ `PER_MASSEUSE` นับจาก **`service_user` (บัญชีที่ถูกมอบหมาย)** ไม่ใช่ `service_staff` (หมอที่ผู้รับบริการเลือกได้)
+> เป็นคนละความหมายกัน — ดู 0.3b และ B5 · ถ้ายังไม่มีการมอบหมายบริการให้ใคร
+> โควตาของ `PER_MASSEUSE` จะเป็น **0 ทั้งที่มีหมอผูกไว้แล้ว**
+>
+> **วันลาถูกหักออกจากโควตา** — ผู้ที่ลาวันนั้นไม่นับ (นับผ่าน `users.id`)
+> ผู้ที่ผูกกับบริการแต่ **ไม่มีบัญชี** จะไม่มีวันลาในระบบ จึงไม่ถูกหัก — เขายังนับโควตาตามปกติ
 
 **สองอันดับที่คนสับสนบ่อย:**
-1. **`allow_staff_selection=true` override ทุกอย่าง** — ข้าม `capacity_type` ไปนับ `selectableStaff()` แทน (CapacityService.php)
-2. **โควตา "ต่อหมอ = 1 คิว/รอบ"** (`PER_STAFF_PER_SLOT_LIMIT = 1`, CapacityService.php) บังคับ**เฉพาะ**ตอนเลือกหมอ ไม่เกี่ยวกับ `capacity_type` อื่น
+1. **`allow_staff_selection=true` override ทุกอย่าง** — ข้าม `capacity_type` ไปนับ `selectableStaff()` แทน โดยนับเฉพาะ `status = ACTIVE` และไม่ลาวันนั้น
+2. **โควตา "ต่อหมอ = 1 คิว/รอบ"** (`CapacityService::PER_STAFF_PER_SLOT_LIMIT`) บังคับ**เฉพาะตอนเลือกหมอ** ไม่เกี่ยวกับ `capacity_type` อื่น
+
+`CapacityService::getMaxCapacity()` · `CapacityService::countAssignedStaff()`
 
 ## 0.5 วงจรชีวิตศูนย์สุขภาพ
 
 ```
-ACTIVE ──toggle-status──> CLOSING ──คิว CONFIRMED หมด──> INACTIVE
-   │                        │
-   │                        └── toggle-status ──> ACTIVE (เปิดใหม่ได้)
-   └── toggle-status ──> CLOSING
+ACTIVE ──toggle (ยังมีคิวค้าง)──> CLOSING ──คิว CONFIRMED หมด──> INACTIVE
+   │                                │
+   │                                └── toggle ──> ACTIVE (เปิดใหม่ได้)
+   └── toggle (ไม่มีคิวค้าง)──> INACTIVE  (ข้าม CLOSING)
 ```
+
+> ระบบไม่มีสถานะระหว่างที่ต้องรอเสมอ — ถ้าไม่มีคิวค้างตอนกดปิด ก็เข้า `INACTIVE` เลย
 
 | สถานะ | รับจองใหม่ | staff login | เห็นใน patient API |
 |---|---|---|---|
@@ -188,28 +217,43 @@ ACTIVE ──toggle-status──> CLOSING ──คิว CONFIRMED หมด─
 
 - `HealthCenter::isBookable()` = `status === 'ACTIVE'` (app/Models/HealthCenter.php)
 - Login บล็อกเฉพาะ INACTIVE (app/Http/Controllers/Api/Staff/StaffAuthController.php)
-- **Auto-close ไม่มี cron** — ถูก dispatch เมื่อ staff เปลี่ยนสถานะคิวเป็น terminal หรือผู้รับบริการกดยกเลิก ขณะศูนย์เป็น CLOSING (`StaffAppointmentService.php`, `PatientHistoryController.php`) → `CloseHealthCenterJob` เช็คว่าไม่มีคิว CONFIRMED แล้วเปลี่ยนเป็น INACTIVE + audit (app/Jobs/CloseHealthCenterJob.php)
+
+**ปิดศูนย์แบบไม่รอคิวหมด** — ดูแผนที่สถานะที่ B11.3
+กด toggle จาก `ACTIVE` ตอนที่ยังไม่มีคิวค้างเลย → เป็น `INACTIVE` ทันที ข้ามขั้น `CLOSING`
+
+**Auto-close ไม่มี cron** — ถูก dispatch เมื่อ staff เปลี่ยนสถานะคิวเป็น terminal
+หรือผู้รับบริการกดยกเลิก ขณะศูนย์เป็น `CLOSING` (`StaffAppointmentService.php`, `PatientHistoryController.php`)
+→ `CloseHealthCenterJob` เช็คว่าไม่มีคิว `CONFIRMED` แล้วเปลี่ยนเป็น `INACTIVE` + audit
 
 ## 0.6 error สองชนิดที่ต้องแยกให้ออก
 
-`POST /v1/patient/book` แยกข้อผิดพลาดออกเป็นสองชนิด (PatientBookingController.php)
+`POST /v1/patient/book` แยกข้อผิดพลาดออกเป็นสองชนิด
 
 | ชนิด | สถานะ | ผู้รับบริการเห็น |
 |---|---|---|
 | **เงื่อนไขทางธุรกิจ** (`BookingException`) | ตามรหัสที่กำหนด เช่น 422 / 409 | ข้อความจริง เช่น `"ท่านมีรายการจองบริการนี้ในวันที่เลือกเรียบร้อยแล้ว"` |
-| **สิทธิการรักษาไม่ตรงกับผู้รับบริการ** | 422 | `"สิทธิการรักษาที่ระบุไม่พบในข้อมูลของผู้รับบริการคนนี้"` — ปฏิเสธแทนที่จะเงียบแล้วสร้างนัดหมายที่ไม่มีสิทธิผูกไว้ (BookingService.php) |
-
+| **สิทธิการรักษาไม่ตรงกับผู้รับบริการ** | 422 | `"สิทธิการรักษาที่ระบุไม่พบในข้อมูลของผู้รับบริการคนนี้"` — ปฏิเสธแทนที่จะเงียบแล้วสร้างนัดหมายที่ไม่มีสิทธิผูกไว้ |
 | **ข้อผิดพลาดของระบบ** (อย่างอื่น) | 500 | `"ไม่สามารถจองคิวได้ กรุณาลองใหม่อีกครั้ง"` — ไม่เผยรายละเอียดภายใน |
 
-> ถ้า debug แล้วจองไม่ผ่าน แต่ข้อความเป็นกลาง แปลว่าตกไปที่ชั้นระบบ → ดู `storage/logs/laravel.log` (มี `Booking failed: <ข้อความจริง>`)
-> validation ของ FormRequest (เช่น `staff_id` ไม่ผูกกับบริการ) ไม่ผ่านเส้นทางนี้ จึงตอบ 422 พร้อม `errors` ชัดเจนเสมอ
+> ถ้า debug แล้วจองไม่ผ่าน แต่ข้อความเป็นกลาง แปลว่าตกไปที่ชั้นระบบ
+> → ดู `storage/logs/laravel.log` (มี `Booking failed: <ข้อความจริง>`)
+>
+> validation ของ FormRequest (เช่น `staff_id` ไม่ผูกกับบริการ) **ไม่ผ่านเส้นทางนี้**
+> จึงตอบ 422 พร้อม `errors` ชัดเจนเสมอ
+>
+> ฝั่งหน้าเคาน์เตอร์ (`POST /walk-in`) **ไม่กลืนข้อผิดพลาดของระบบ** — ดู B7.3
 
 ## 0.7 เลขคิว (queue number)
 
 - `appointment_number` = `max(appointment_number)` ของ `(health_center_id, appointment_date)` + 1
 - `queue_no` = `"Q-"` + เติมศูนย์ข้างหน้า 3 หลัก → `Q-001`, `Q-002`
 - **รีเซ็ตทุกวัน และใช้ร่วมกันทุกบริการของศูนย์นั้น** (ไม่ใช่เลขแยกรายบริการ)
-- `BookingService.php`
+- **ล็อกที่แถวศูนย์สุขภาพ ไม่ใช่แถวนัดหมาย** เพราะการหาค่าสูงสุดเป็นการรวมค่า
+  จึงไม่ล็อกแถวใดแม้เขียน `lockForUpdate` — ล็อกแถวนัดหมายจะไม่กันการจองพร้อมกัน
+- **ดัชนีไม่ซ้ำ `uq_appointments_daily_queue` บน `(ศูนย์, วันที่, เลขคิว)** เป็นการป้องกันชั้นสุดท้าย
+  ถ้าชน → 409 `"มีการจองพร้อมกัน กรุณาลองใหม่อีกครั้ง"` ให้ผู้ใช้ลองใหม่ ไม่ใช่บอกว่าระบบเสีย
+
+`BookingService::createAppointment()` · `BookingService::lockDailyQueue()`
 
 ---
 
@@ -223,13 +267,20 @@ ACTIVE ──toggle-status──> CLOSING ──คิว CONFIRMED หมด─
 
 **`GET /v1/patient/categories`**
 คืนหมวดหมู่ที่ `status=ACTIVE` เรียงตาม `sort_order` — field: `id`, `name`, `icon`
-`PatientLocationController.php`
+ไม่ paginate · ไม่มีการกรองเพิ่ม
+
+`PatientLocationController::getCategories()`
 
 ### A1.2 ได้สิทธิการรักษา (ต้องมีก่อนสมัครสมาชิก)
 
 **`GET /v1/patient/right-types`**
 คืนสิทธิที่ `status=ACTIVE` — field: `id`, `code`, `name`, `description`
-`PatientLocationController.php`
+ไม่ paginate · **ไม่เรียงตามอะไร** (ไม่มี `sort_order`)
+
+> การลงทะเบียนของผู้รับบริการบังคับ `right_type_id` แต่**ไม่ตรวจ `status`**
+> จึงส่งสิทธิที่ปิดอยู่ก็ได้ ไม่ผิด 422 (ต่างจากหน้าเคาน์เตอร์ที่บังคับเป็น `ACTIVE`)
+
+`PatientLocationController::getRightTypes()`
 
 ### A1.3 ค้นหาศูนย์ใกล้เคียง
 
@@ -237,35 +288,54 @@ ACTIVE ──toggle-status──> CLOSING ──คิว CONFIRMED หมด─
 ```json
 { "latitude": 13.7563, "longitude": 100.5018, "category_id": 1 }
 ```
+
 | field | rule |
 |---|---|
 | `latitude` | required, numeric, -90..90 |
 | `longitude` | required, numeric, -180..180 |
 | `category_id` | required, `exists:categories,id` |
 
-คืนเฉพาะศูนย์ **`ACTIVE`** ที่ **มีบริการของหมวดหมู้นั้นและ `is_active=true`** เรียงตาม `distance_km` จริง (สูตร Haversine)
+คืนเฉพาะศูนย์ **`ACTIVE`** ที่ **มีบริการของหมวดหมู้นั้นและ `is_active=true`** และไม่ถูก soft delete
+เรียงตาม `distance_km` จริง (สูตร Haversine) คินละ 2 ตำแหน่งทศนิยม
 พร้อมบริการของหมวดหมู้นั้นฝังมาให้ → ใช้เลือกศูนย์ได้เลยโดยไม่ต้องเปิด detail
-`NearbyCentersRequest.php` · `LocationService.php`
+
+envelope มี `count` ด้วย · บริการที่ฝังมาไม่มี `allow_staff_selection` — ถ้าต้องการรู้ต้องเรียก A1.5
+
+`NearbyCentersRequest::rules()` · `LocationService::getNearbyHealthCenters()`
 
 ### A1.4 ดูรายละเอียดศูนย์
 
 **`GET /v1/patient/health-centers/{id}`**
 เห็นได้ทั้ง `ACTIVE` และ `CLOSING`; `INACTIVE` → **404**
-`PatientLocationController.php`
+คืน 11 field: `id`, `code`, `name`, `phone_number`, `subdistrict`, `district`,
+`province`, `full_address`, `latitude`, `longitude`, `status`
+
+> endpoint นี้ไม่มี `health_center_status` แยก — ดู `status` ใน `data` ได้เลย
+> ต่างจาก A1.5 ที่ยกขึ้นมาไว้ที่ระดับ envelope
+
+`PatientLocationController::getCenterDetail()`
 
 ### A1.5 ดูบริการของศูนย์
 
 **`GET /v1/patient/health-centers/{id}/services`**
-เห็นได้เฉพาะบริการที่ผ่าน **4 เงื่อนไขพร้อมกัน** (`PatientLocationController.php`):
+เห็นได้เฉพาะบริการที่ผ่าน **4 เงื่อนไขพร้อมกัน**:
 1. `services.is_active = true`
 2. มี pivot `service_time_slot` ≥ 1 แถว (คือมีการตั้งวันเปิดให้บริการแล้ว)
 3. `category.status = ACTIVE`
 4. ศูนย์เป็น ACTIVE/CLOSING
 
+ศูนย์ `INACTIVE` → **404** (ทั้งรายละเอียดศูนย์และรายการบริการ)
 แต่ละรายการคืน: `id`, `name`, `description`, `capacity_type`, **`allow_staff_selection`**, `category`, `capacity`, `time_slots[]`
 envelope มี `health_center_status` ด้วย → **เช็คสถานะศูนย์ได้จากที่นี่ที่เดียว**
 
+`time_slots[]` แต่ละรายการคืน `time_slot_id` + `days[]` (1-7)
+โดย `days` ถอดจาก bitmask `days_mask` — ไม่ใช่ตารางแยก
+
 > หมายเหตุ: endpoint นี้**ไม่**กรองบริการที่หมอลาหมด (ต่างจาก staff `services?date=`) — ผู้รับบริการจะเห็นบริการแล้วค่อยพบว่าเต็มตอนกดดูช่วงเวลา
+>
+> หมายเหตุ: บริการที่ soft delete แล้วจะไม่ปรากฏ
+
+`PatientLocationController::getCenterServices()` · `Service::slotsWithDays()`
 
 ---
 
@@ -302,7 +372,11 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 
 สร้าง `patients` + `patient_rights` (ตั้ง `is_primary=true`) ใน transaction เดียว แล้วออก token ให้เลย
 → **201** `{ success, message, token, patient: { id, masked_name } }`
-`PatientRegisterRequest.php` · `PatientAuthController.php`
+
+> `right_type_id` ไม่ตรวจ `status` — ต่างจากหน้าเคาน์เตอร์ที่บังคับให้เป็นประเภทที่ยังเปิดใช้
+> ถ้าต้องการให้เหมือนกันต้องแก้ที่ `PatientRegisterRequest`
+
+`PatientRegisterRequest::rules()` · `PatientAuthController::register()`
 
 ### A2.2 เข้าสู่ระบบ
 
@@ -311,24 +385,32 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 { "phone_number": "0899876543", "birth_date": "1990-01-01" }
 ```
 
-**3 ผลลัพธ์ที่ต้องแยกให้ออก:**
+**4 ผลลัพธ์ที่ต้องแยกให้ออก:**
 
 | สถานการณ์ | HTTP | คือ | client ต้องทำ |
 |---|---|---|---|
 | เบอร์ไม่มีในระบบ | **200** | `is_registered: false, token: null` | พาไปหน้าสมัคร |
-| วันเกิดผิด (ครบ 5 ครั้ง) | **423** | `"บัญชีถูกระงับชั่วคราว 30 นาที"` | ปิดปุ่ม login |
+| บัญชียังถูกล็อกอยู่ | **423** | `"บัญชีถูกระงับชั่วคราว... กรุณารออีก N นาที"` | ปิดปุ่ม login และนับถอยหลัง |
+| วันเกิดผิด (ครบ 5 ครั้ง) | **423** | `"กรอกวันเดือนปีเกิดไม่ถูกต้องครบ 5 ครั้ง..."` | ปิดปุ่ม login |
 | สำเร็จ | **200** | `is_registered: true, token, patient{id, masked_name, masked_phone}` | เก็บ token |
 
 - วันเกิดผิดครั้งที่ 1-4 → **401** พร้อม `"เหลือโอกาสอีก N ครั้ง"` และ `failed_login_attempts++`
-- ครบ 5 ครั้ง → ตั้ง `locked_until = now()+30min` → รอบถัดไปตอบ 423 ทันที
+- ครบ 5 ครั้ง → ตั้ง `locked_until = now()+30min` (ทันทีที่ครบครั้งที่ 5 ไม่ต้องรอครั้งที่ 6)
 - login สำเร็จ → reset `failed_login_attempts = 0`, `locked_until = null`
-`PatientAuthService.php`
+- **ตรวจการล็อกก่อนตรวจวันเกิด แต่หลังจากหาเจอผู้รับบริการแล้ว**
+  เบอร์ที่ไม่มีในระบบจะไม่มี `locked_until` ให้ตรวจ จึงตอบ 200 `is_registered: false` เสมอ
+- **มี 2 ชั้นที่คนละเรื่องกัน**: `throttle:patient-login` 10/นาที (ต่อเบอร์ หรือต่อ IP ถ้าไม่ส่งมา)
+  กับตัวนับที่ระดับ `patients` 5 ครั้ง/30 นาที — ชั้นแรกกันการยิงรัว ชั้นหลังกันการเดาเบอร์ทีละเบอร์
+
+`PatientAuthService::authenticate()`
 
 ### A2.3 ดูโปรไฟล์ตัวเอง
 
 **`GET /v1/patient/me`** (ต้อง token)
 คืนข้อมูลแบบ **masked** (ชื่อ/เบอร์/เลขบัตรถูกปิดบัง) + `rights[]`
-`PatientAuthController.php`
+อยู่ใน key `data` · ไม่มี endpoint ฝั่งผู้รับบริการที่ unmask ได้
+
+`PatientAuthController::me()` · `PatientResource`
 
 ---
 
@@ -351,7 +433,10 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 | `service_id` | required, ต้องเป็นบริการที่ `is_active=true` และยังไม่ถูก soft delete |
 | `date` | required, `Y-m-d`, **≥ วันนี้** (ย้อนหลังไม่ได้) |
 
-`AvailableSlotsRequest.php`
+> `service_id` ที่ไม่ผ่านเงื่อนไข → **422** พร้อม `errors` ไม่ใช่ 404
+> เพราะเป็น validation ระดับ Request ไม่ใช่การค้นแล้วไม่เจอ
+
+`AvailableSlotsRequest::rules()`
 
 **response แบบเปิดเลือกหมอ** — แต่ละ slot มี `staff[]`:
 ```json
@@ -361,7 +446,7 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
   "capacity_type": "PER_MASSEUSE",
   "date": "2026-09-25",
   "slots": [{
-    "time_slot_id": 1, "time_label": "09:00-09:30",
+    "time_slot_id": 1, "time_label": "09:00 - 09:30 น.",
     "start_time": "09:00", "end_time": "09:30",
     "max_capacity": 2,
     "available_count": 2, "is_full": false,
@@ -400,35 +485,57 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 
 | field | rule |
 |---|---|
-| `service_id` | required, `exists:services,id` |
-| `time_slot_id` | required — **ต้องเป็น slot ที่เปิดในวันที่เลือกจริง** (เช็คจาก `service_time_slot` + `days_mask`) |
+| `service_id` | required, `exists:services,id` — **ไม่กรอง `is_active` ที่นี่** เช็คทีหลังใน service (ข้อ 1) |
+| `time_slot_id` | required — **ต้องเป็น slot ที่เปิดในวันที่เลือกจริง** (เช็คจาก `service_time_slot` + `days_mask` + `time_slots.is_active`) |
 | `appointment_date` | required, `Y-m-d`, **≥ วันนี้** |
-| `staff_id` | nullable ใน Request — **แต่บังคับตอน business** ต้องมีเมื่อเปิดเลือกหมอ |
-| `patient_right_id` | optional — ส่งมาแล้วหาไม่เจอ **ปฏิเสธ 422** ไม่เงียบ เพราะข้อมูลที่ส่งมาไม่ถูกต้อง |
+| `staff_id` | nullable ใน Request — แต่ถ้าส่งต้องอยู่ใน `service_staff` ของบริการนั้น และ**บังคับต้องมีเมื่อเปิดเลือกหมอ** (ตอน business) |
+| `patient_right_id` | optional — ต้องเป็นสิทธิของผู้รับบริการ**คนนี้** (เช็คใน Request แล้ว) |
 
-`BookAppointmentRequest.php`
+> ต่างจาก `POST /walk-in`: ฝั่งผู้รับบริการ `patient_right_id` ผูกกับ `patient_id = user.id`
+> ส่วนหน้าเคาน์เตอร์ผูกกับ `cid` ที่ส่งมา (ดู B7.3)
+>
+> `service_id` ที่ **soft delete แล้ว** ผ่าน validation นี้ (rule ตรวจตารางตรง ๆ ไม่เห็น `deleted_at`)
+> แต่ `findOrFail` ใน service จะไม่เจอ → **404** ก่อนถึงข้อ 1
+> ส่วนบริการที่แค่ `is_active = false` → ผ่าน validation แล้วไปตกที่ข้อ 1 ตามปกติ
+>
+> ต่างจาก `GET /available-slots` ที่กรอง `is_active` + `deleted_at` ตั้งแต่ใน Request
+> ทำให้สอง endpoint นี้ตอบคนละแบบสำหรับ `service_id` ที่ถูกปิดหรือลบแล้ว
 
-**ตรวจสอบตามลำดับ** (`BookingService::createAppointment`, app/Services/BookingService.php) — ทั้งหมดอยู่ใน transaction เดียว ใช้ `lockForUpdate()` กัน race:
+`BookAppointmentRequest::rules()`
 
-| # | ตรวจอะไร | ผลลัพธ์เมื่อไม่ผ่าน |
+**ตรวจสอบตามลำดับ** — ทั้งหมดอยู่ใน transaction เดียว
+
+| # | ตรวจอะไร | เมื่อไม่ผ่าน |
 |---|---|---|
-| 1 | `service.is_active` | ปิดชั่วคราว |
-| 2 | ศูนย์ `isBookable()` = ACTIVE | ศูนย์ปิดรับการจองใหม่ |
-| 3 | `time_slot` เปิดในวันนั้น | บริการไม่เปิดในวันที่เลือก |
-| 4 | ช่วงเวลาสิ้นสุดยังไม่ผ่านมาแล้ว (**เฉพาะการจองเอง**) | ช่วงเวลานี้เลยกำหนดแล้ว |
-| 5 | `isServiceAvailable` (บุคลากรไม่ลาครบทั้งหมด) | บริการปิดชั่วคราว |
-| 6 | ไม่จอง service เดิมซ้ำวันเดิม (CONFIRMED) | ท่านมีรายการซ้ำแล้ว |
-| 7 | **เปิดให้เลือกบุคลากร** → `staff_id` ต้องมี | กรุณาเลือกบุคลากร |
-| 8 | บุคลากร ACTIVE + ผูกกับบริการนี้ + ไม่ลา | เลือกคนนี้ไม่ได้ |
-| 9 | บุคลากรยังไม่เต็มรอบ (1 คิว/รอบ/คน) | เต็มคิวในรอบนี้แล้ว |
-| — | *กรณีไม่เปิดให้เลือกบุคลากร* → โควตาว่าง (`lockForUpdate`) | คิวในรอบเวลานี้เต็มแล้ว |
-| 10 | สิทธิการรักษาที่แนบยังไม่หมดอายุ | สิทธิหมดอายุแล้ว |
+| 1 | `service.is_active` | `"ขออภัย บริการนี้ปิดให้บริการชั่วคราว"` |
+| 2 | ศูนย์ `isBookable()` = ACTIVE | `"ศูนย์ปิดรับการจองใหม่"` |
+| 3 | `time_slot` เปิดในวันนั้น | `"บริการนี้ไม่เปิดให้บริการในวันที่เลือก"` |
+| 4 | ช่วงเวลาสิ้นสุดยังไม่ผ่านมาแล้ว (**เฉพาะการจองเอง**) | `"ช่วงเวลานี้เลยกำหนดแล้ว กรุณาเลือกช่วงเวลาอื่น"` |
+| 5 | `StaffLeave::isServiceAvailable` (บุคลากรไม่ลาครบทั้งหมด) | `"บริการนี้ปิดชั่วคราว เนื่องจากเจ้าหน้าที่ทั้งหมดลางานในวันนี้"` |
+| 6 | ไม่จอง service เดิมซ้ำวันเดิม (CONFIRMED) | `"ท่านมีรายการจองบริการนี้ในวันที่เลือกเรียบร้อยแล้ว"` |
+| 7 | **เปิดให้เลือกบุคลากร** → `staff_id` ต้องมี | `"กรุณาเลือกเจ้าหน้าที่/หมอที่ต้องการรับบริการ"` |
+| 8 | `StaffLeave::isStaffAvailableForService` | `"ไม่สามารถเลือกเจ้าหน้าที่นี้ได้ในวันที่เลือก (ไม่ว่างหรือไม่ได้ให้บริการนี้)"` |
+| 9 | `CapacityService::isStaffSlotAvailable` | `"เจ้าหน้าที่ที่ท่านเลือกเต็มคิวในรอบเวลานี้แล้ว..."` |
+| — | *กรณีไม่เปิดให้เลือกบุคลากร* → นับคิวแล้วเทียบโควตา | `"ขออภัย คิวในรอบเวลานี้เต็มแล้ว กรุณาเลือกรอบเวลาอื่น"` |
+| 10 | สิทธิการรักษาที่แนบยังไม่หมดอายุ | สิทธิหมดอายุแล้ว (ดูหัวข้อ 0.6) |
 | 11 | ออกเลขคิว = `max+1` ของ (ศูนย์, วันนั้น) + ดัชนีกันซ้ำ | ชนกัน → 409 ให้ลองใหม่ |
 
-> ข้อ 4 **ไม่ใช้กับนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์** เพราะผู้รับบริการมาถึงหน้าเคาน์เตอร์แล้วต้องได้รับบริการ
-> ข้อ 8 ตรวจ 2 ชั้น: `isStaffAvailableForService()` (StaffLeave.php) และ `isStaffSlotAvailable()` (CapacityService.php)
-> ข้อ 10 ใช้กับทุกทางเข้า ทั้งจองเองและหน้าเคาน์เตอร์
-> ข้อความ error ของ `POST /v1/patient/book` **ถูกกลืน** → ดูหัวข้อ 0.6
+- **ข้อ 5 ใช้กับทุกทางเข้า** ทั้งจองเองและหน้าเคาน์เตอร์ — เป็นกติกาเดียวกัน
+- ข้อ 4 เป็นของ `bookedByType === 'SELF'` เท่านั้น (ดู B7.3)
+- ข้อ 9 ใช้ `CapacityService::PER_STAFF_PER_SLOT_LIMIT` (ดู 0.4)
+- ข้อ 10 ใช้กับทุกทางเข้า ทั้งจองเองและหน้าเคาน์เตอร์
+- **ข้อความ error ของ `POST /v1/patient/book` ถูกส่งตรงให้ผู้รับบริการ** (ดูหัวข้อ 0.6)
+- ⚠️ ข้อ 11 ล็อกที่แถวศูนย์สุขภาพ ไม่ใช่แถวนัดหมาย (ดู 0.7) — เพราะการหา `max()` ไม่ล็อกแถวใด
+- ⚠️ กรณีไม่เปิดให้เลือกบุคลากร: `lockForUpdate` อยู่บน query ที่นับคิว
+  ซึ่งเป็นการรวมค่าเหมือนกัน จึงไม่ได้ล็อกแถวใดเช่นกัน (ต่างจาก `reassign-staff` ที่ล็อกทั้งสองแถว)
+
+**หมายเหตุเรื่องลำดับ:** ข้อ 5 มาก่อนข้อ 6
+ถ้าบุคลากรลาครบแต่ผู้รับบริการเคยจองบริการนั้นวันเดียวกัน จะได้ข้อความ "บริการปิดชั่วคราว"
+ไม่ใช่ "ท่านมีรายการซ้ำแล้ว" — ตรวจจากข้อความที่ได้จริง ไม่ควรเดาจากข้อมูลที่ส่งมา
+
+**หมายเหตุเรื่องลำดับ:** ข้อ 5 (`isServiceAvailable`) มาก่อนข้อ 6 (กันจองซ้ำ)
+ถ้าหมอลาครบแต่ผู้รับบริการเคยจองบริการนั้นวันเดียวกัน จะได้ข้อความ "บริการปิดชั่วคราว" ไม่ใช่ "ท่านมีรายการซ้ำแล้ว"
+ตรวจจากข้อความที่ได้จริง ไม่ควรเดาจากข้อมูลที่ส่งมา
 
 **Response 201:**
 ```json
@@ -437,12 +544,13 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
   "data": {
     "appointment_id": 1, "queue_no": "Q-001",
     "health_center": "...", "service_name": "...",
-    "appointment_date": "2026-09-25", "time_slot": "09:00-09:30",
+    "appointment_date": "2026-09-25", "time_slot": "09:00 - 09:30 น.",
     "staff": { "id": 1, "name": "...", "position": "หมอนวด" }
   }
 }
 ```
-`PatientBookingController.php`
+`time_slot` คือค่า `label` ของช่วงเวลา · `staff` เป็น `null` เมื่อบริการไม่เปิดให้เลือกหมอ (A4)
+`PatientBookingController::book()`
 
 ### ตรวจสอบ / ยกเลิก (optional)
 
@@ -459,22 +567,27 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 |---|---|---|
 | ขั้น 3 — `available-slots` | มี `staff[]` ให้เลือกต่อ slot | **ไม่มี key `staff` เลย** |
 | ขั้น 5 — `book` | ต้องส่ง `staff_id` | **ไม่ส่ง** `staff_id` |
-| การนับโควตา | ต่อหมอ (1 คิว/รอบ/คน) | ตาม `capacity_type` (รวม/ต่อรอบ/ต่อวัน) |
+| `max_capacity` ที่ขั้น 3 | จำนวนหมอที่เลือกได้และยังให้บริการ | ตาม `capacity_type` (ดู 0.4) |
+| `available_count` ที่ขั้น 3 | จำนวนหมอที่ **ยังว่าง** ในรอบนั้น | โควตาที่เหลือของรอบ (หรือทั้งวันถ้า `PER_DAY`) |
+| การนับตอนจอง | ต่อหมอ (1 คิว/รอบ/คน) | `lockForUpdate` แล้วเทียบกับโควตา |
 | response `staff` | คืนหมอที่เลือก | คืน `null` → `"เจ้าหน้าที่": "ระบบจัดสรร"` ใน Discord |
 
 **ขั้นตอนเดียวกันเป๊ะ** — A1.1 → A1.5 → ขั้น 3 → login/register → `POST /book` → A5
 
-ผลลัพธ์ขั้น 3 แบบไม่เลือกหมอ:
+ผลลัพธ์ขั้น 3 แบบไม่เลือกหมอ — envelope เหมือนกัน มี `service_name` / `capacity_type` / `date` ด้วย
 ```json
 {
   "slots": [{
-    "time_slot_id": 1, "time_label": "09:00-09:30",
+    "time_slot_id": 1, "time_label": "09:00 - 09:30 น.",
+    "start_time": "09:00", "end_time": "09:30",
     "max_capacity": 1, "available_count": 1, "is_full": false
   }]
 }
 ```
 
-**`PER_DAY` ต่างอีก:** ค่า `available_count` คือ **ทั้งวันรวมกัน** ไม่ใช่รายรอบ — ถ้าเต็ม 1 คิว รอบอื่นของวันเดียวกันจะเป็น `available_count: 0` ด้วย (`CapacityService.php`)
+**`PER_DAY` ต่างอีก:** ค่า `available_count` คือ **ทั้งวันรวมกัน** ไม่ใช่รายรอบ — ถ้าเต็ม 1 คิว รอบอื่นของวันเดียวกันจะเป็น `available_count: 0` ด้วย
+
+`CapacityService::countBookedByTimeSlot()`
 
 ---
 
@@ -483,16 +596,18 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 ### A5.1 ดูประวัติ
 
 **`GET /v1/patient/appointments?per_page=20`**
-- คืนเฉพาะของตัวเอง เรียงวันที่ล่าสุดขึ้นมา
+- คืนเฉพาะของตัวเอง เรียงวันที่มาก→น้อย แล้ว id มาก→น้อย
 - `per_page` ถูก clamp ระหว่าง 1-100 (ส่งเกินจะถูกตัด ไม่ error)
 - envelope มี `meta: { current_page, last_page, per_page, total }`
-`PatientHistoryController.php`
+- **ไม่มีตัวกรอง** — ดูทุกสถานะรวมทั้งที่ยกเลิกแล้ว
+
+`PatientHistoryController::index()`
 
 ### A5.2 ดูรายละเอียด 1 ใบ
 
 **`GET /v1/patient/appointments/{id}`**
 คืน key `ticket` (ไม่ใช่ `data`) — ของผู้รับบริการอื่น → 404
-`PatientHistoryController.php`
+`PatientHistoryController::show()`
 
 ### A5.3 ยกเลิก
 
@@ -501,15 +616,17 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 { "reason": "ติดธุระ" }   // optional, max 500
 ```
 
-**ยกเลิกได้เฉพาะเมื่อ 2 เงื่อนไขพร้อมกัน** (`PatientHistoryController.php`):
+**ยกเลิกได้เฉพาะเมื่อ 2 เงื่อนไขพร้อมกัน:**
 1. `status = CONFIRMED`
 2. เป็นวันอนาคต **หรือ** เป็นวันนี้แต่ยังไม่เลยเวลาสิ้นสุดของรอบ (`timeSlot.end_time > เวลาปัจจุบัน`)
 
 ไม่ผ่านเงื่อนไขใดข้อ → **404** (ไม่ใช่ 422 — เพราะ query ถูกจำกัดเงื่อนไขไว้ก่อน `findOrFail`)
 
 - `reason` ไม่ส่ง → default `"ผู้รับบริการขอยกเลิกเองผ่านระบบ"`
-- ถ้าศูนย์เป็น CLOSING → dispatch `CloseHealthCenterJob` ลองปิดศูนย์อัตโนมัติ (`:71-73`)
+- ถ้าศูนย์เป็น CLOSING → dispatch `CloseHealthCenterJob` ลองปิดศูนย์อัตโนมัติ
 - **ยกเลิกแล้วย้อนกลับไม่ได้** — `VALID_TRANSITIONS` ไม่มีทางออกจาก CANCELLED
+
+`PatientHistoryController::cancel()` · `CancelAppointmentRequest::rules()`
 
 ---
 
@@ -517,6 +634,17 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 
 > ทุก endpoint ใน Part B ต้องมี Staff token และผ่าน role gate `STAFF, HEALTH_CENTER_ADMIN, SUPER_ADMIN`
 > **ระลึกกฎ `health_center_id` ในหัวข้อ 0.3 ทุกครั้ง**
+>
+> ⚠️ **กลุ่มที่ต้องเลื่อนไปดู `routes/api.php` เสมอ** — ไม่ใช่ทุก endpoint อยู่ใน group เดียวกัน:
+>
+> | group | ใครเข้าถึงได้ | มีอะไรบ้าง |
+> |---|---|---|
+> | `role:STAFF,HC_ADMIN,SUPER_ADMIN` | ทุกบทบาท | dashboard, appointments, roster, leaves, services CRUD, **patients/{id}/contact** |
+> | `role:SUPER_ADMIN,HC_ADMIN` | ผู้ดูแลขึ้นไป | admin/users, admin/roles, **walk-in**, **patients/{id}** (แก้เต็ม), health-centers, time-slot-days, assignees, service/staff |
+> | `role:SUPER_ADMIN` | ผู้ดูแลระบบเท่านั้น | discord webhook, admin/health-centers, สร้าง/แก้/ลบ time slot |
+> | ต่อ route | ระบุเอง | `GET /health-centers` (dropdown), `POST /leaves` เป็น STAFF ได้ |
+>
+> เอกสารนี้ระบุ role ไว้ทุก endpoint แต่ถ้าขัดแย้ง ให้เชื่อ `routes/api.php`
 
 ## B1. Login / โปรไฟล์ตัวเอง / Logout
 
@@ -533,10 +661,30 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 }
 ```
 **ที่ควรรู้:**
-- ชื่อผู้ใช้/รหัสผิด → `ValidationException` 422 (ไม่ใช่ 401)
-- `health_center` เป็น `null` สำหรับ SUPER_ADMIN และไม่ถูกตรวจ
-- ศูนย์เป็น `INACTIVE` → **403** `"ศูนย์สุขภาพต้นสังกัดถูกระงับการใช้งานชั่วคราว"`
-- ศูนย์เป็น `CLOSING` → **ยัง login ได้** (StaffAuthController.php)
+- ชื่อผู้ใช้/รหัสผิด → **422** (ไม่ใช่ 401) ด้วยข้อความเดียวกันทั้งสองกรณี เพื่อไม่ให้บอกว่าชื่อถูกแต่รหัสผิด
+- **`status != ACTIVE` ถูกมองเหมือนไม่มีบัญชี** → 422 ข้อความเดียวกัน ไม่ใช่ 403 (สอดคล้องกับหัวข้อ 0.6 ตรงกันว่าไม่เผยว่าชื่อผู้ใช้นี้มีจริงหรือไม่)
+- บัญชีที่ไม่มีศูนย์ (แต่ไม่ใช่ SUPER_ADMIN) → **403** `"ไม่พบข้อมูลศูนย์สุขภาพ ต้นสังกัด กรุณาติดต่อผู้ดูแลระบบ"`
+- ศูนย์ `INACTIVE` → **403** `"ศูนย์สุขภาพ ต้นสังกัดถูกระงับการใช้งานชั่วคราว"`
+- ศูนย์ `CLOSING` → **ยัง login ได้** เพราะต้องจัดการคิวที่เหลือ (เช็คเป็นรายการ `ACTIVE`/`CLOSING` ไม่ใช่แค่ `ACTIVE`)
+- `health_center` ใน response เป็น `null` สำหรับ SUPER_ADMIN — ต้องเลือกศูนย์เองทุกครั้งที่ส่งคำขอแบบเจาะจง
+- `role` ใน response คือ role แรกเท่านั้น (`roles->first()`) ถ้ามีหลาย role จะเห็นแค่ตัวเดียว
+- token อายุ 24 ชม. (Sanctum `expiration => 1440`)
+
+**`throttle.staff` — ต่างจาก limiter ปกติ:**
+
+| จุด | พฤติกรรม |
+|---|---|
+| นับทีละเลข 5 ครั้ง / 30 นาที | ต่อ **คู่ (username + IP)** — ไม่ใช่แค่ IP อย่างเดียว |
+| นับ **ทุกครั้ง** ที่มีการพยายาม | รวมถึงกรณีรหัสผิดที่ตอบ 422 (เดิมนับเฉพาะ 401/403 ทำให้ตัวนับถูกล้างทุกครั้ง) |
+| ล้างตัวนับเมื่อ login สำเร็จ | `RateLimiter::clear` — ล็อกจะหายทันทีไม่ต้องรอ 30 นาที |
+| เกินลิมิต → **429** | พร้อม `"ล็อกอินหลายครั้งเกินไป กรุณารอ N วินาที"` |
+
+> คู่ (username + IP) หมายถึงผู้โจมตีที่เปลี่ยน IP ได้ลิมิตใหม่ต่อชื่อผู้ใช้เดิม
+> ชั้นนี้จึงกันการยิงรัวจากเครื่องเดียว ไม่ใช่การกันการเดารหัสผ่านแบบกระจาย
+
+`ThrottleStaffLogin::handle()` · ดู B2.3 เรื่อง limiter รวม
+
+`StaffAuthController::login()` · `StaffLoginRequest::rules()`
 
 **2. `GET /v1/staff/me`** — ข้อมูลตัวเอง + `roles[]` + `health_center` เต็มรูปแบบ
 > สำหรับ STAFF/HC_ADMIN ค่านี้แทน `GET /v1/staff/health-centers` ได้ (ซึ่งคืนแค่ศูนย์ตัวเอง 1 แถว)
@@ -548,9 +696,17 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 ```json
 { "current_password": "เดิม", "password": "ใหม่อย่างน้อย 6 ตัว", "password_confirmation": "ใหม่อย่างน้อย 6 ตัว" }
 ```
-เปลี่ยนรหัสผ่าน **ต้องส่ง `current_password` ที่ถูกต้อง** เสมอ (UpdateProfileRequest.php)
+
+เปลี่ยนรหัสผ่าน **ต้องส่ง `current_password` ที่ถูกต้อง** เสมอ
+
+> ⚠️ **การเปลี่ยนรหัสผ่านตัวเองไม่ตัด token เดิมทิ้ง** — session อื่นยังใช้ได้
+> ต่างจาก `PATCH /admin/users/{id}` ที่ตัดทั้งหมด (ดู B12.4)
+> ถ้าต้องการให้ถอด session เมื่อเปลี่ยนรหัสผ่านต้องเพิ่มเอง
+
+`UpdateProfileRequest::rules()` · `StaffAuthController::updateProfile()`
 
 **4. `POST /v1/staff/logout`** — ลบ token ปัจจุบันเท่านั้น (token อื่นยังใช้ได้)
+> ถ้าต้องการถอดทุก session ต้องเรียก revoke ที่อื่น
 
 ---
 
@@ -600,7 +756,8 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 - `summary.total` **เท่ากับ** จำนวนใน `appointments` เสมอ — มี test ล็อกไว้
 - `date` เดียวกันกับทั้งสามชิ้น
 - ข้อมูลผู้รับบริการใน `appointments` ยังถูกปิดบังเหมือนเดิม (ไม่มี `cid` หรือที่อยู่)
-- `roster` คืน `effective_status` (รวมวันลา) · ไม่ส่ง `date` จะไม่มีฟิลด์นี้
+- **`roster` มี `effective_status` เสมอ** — ต่างจาก `GET /staff/roster` ที่ต้องส่ง `?date=` จึงจะมี
+  เพราะ bundle ใส่วันให้เสมอ (ถ้าไม่ส่ง = วันนี้)
 - **endpoint เดิมทั้งสามยังทำงานเหมือนเดิม** — ย้ายมาใช้ bundle ทีละหน้าได้
 
 `StaffDashboardController::bundle()`
@@ -615,9 +772,16 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 | ผู้รับบริการ · ยังไม่ยืนยันตัวตน | **60** |
 
 - **นับแยกตามบัญชี ไม่ใช่ตาม IP** — ผู้เรียกคนเดียวที่ยิงหนักไม่กระทบคนอื่น
+  อ่านเจ้าของโทเคนจาก header โดยตรง เพราะตัว limiter ทำงานก่อน auth
+  และแยกชนิดบัญชีด้วย morph class เพราะเจ้าหน้าที่กับผู้รับบริการเก็บคนละตาราง เลขบัญชีจึงซ้ำกันได้
+- **โทเคนที่ไม่รู้จักหรือหมดอายุ → นับเป็น `ip:` ที่โควตา 60** เหมือนยังไม่ยืนยันตัวตน
+  ตัวจำกัดอัตราไม่ตรวจวันหมดอายุซ้ำ เพราะการยืนยันตัวตนจะตรวจอีกครั้งอยู่แล้ว
+- **เจ้าหน้าที่ที่ถูกถอด role ออกแล้ว → ตกไปใช้โควตา 60** แม้ยังมีโทเคนที่ยังไม่หมดอายุ
+  เพราะโควตาขึ้นกับ role ในฐานข้อมูลขณะนั้น ไม่ใช่ตาม ability ที่แนบในโทเคน
 - **เก็บตัวนับใน Redis** (`CACHE_STORE=redis`) จึงนับรวมทุก instance
 - เป็น **fixed window** — ขอบเขตแรงสุดคือโควตาเต็มในช่วงเวลาใดช่วงหนึ่ง แล้วเป็นศูนย์ทันทีเมื่อข้ามเส้น
   ถ้าหน้าจอยิงแน่นตอนเปิดจนชนเพดาน ผู้ใช้จะเจอ 429 ทันทีและต้องรอข้ามเส้น
+- **ไม่มีโควตาแยกตามบทบาท** — ผู้ดูแลระบบที่ยิงรายงานหนักกินโควตาเดียวกับเจ้าหน้าที่
 
 **ลิมิตเฉพาะทางที่เข้มกว่านี้** (ทำงานทับโควตารวม):
 
@@ -630,8 +794,12 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 
 > `patient-login` นับต่อเบอร์โทร ไม่ใช่ต่อ IP เพราะต้องกันการเดารหัสผ่านการลองเบอร์ทีละเบอร์
 > ถ้าใช้ IP ผู้โจมตีเปลี่ยน IP แล้วเดาได้ไม่จำกัด
+> ไม่ส่ง `phone_number` มาเลย → ตกไปนับที่ IP แทน
+>
+> ⚠️ **`throttle:unmask` (10/นาที) เข้มกว่าโควตารวมของเจ้าหน้าที่ (240/นาที) เสมอ**
+> ถ้าหน้าจอเปิดดูข้อมูลผู้รับบริการถี่จะโดน 429 ที่นี่ก่อนโควตารวมเสมอ
 
-`AppServiceProvider::boot()`
+`AppServiceProvider::boot()` — ค่าอยู่ในค่าคงที่ `STAFF_RATE_LIMIT` / `PUBLIC_RATE_LIMIT` ต้องแก้ที่นี่ที่เดียว
 
 ---
 
@@ -647,7 +815,9 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 | `?health_center_id=` | SUPER_ADMIN กรองศูนย์ |
 | `?date=YYYY-MM-DD` | **ซ่อนบริการที่หมอทั้งหมดลาในวันนั้น** (เฉพาะเมื่อมี center scope ชัดเจน) |
 
-`StaffServiceController.php` — การกรองใช้ `StaffLeave::isServiceAvailable()` ตัวเดียวกับ booking
+**เปิดให้ STAFF ทั่วไปเรียกได้** — ไม่ถูกจำกัดที่บทบาทบริหาร
+
+`StaffServiceController::index()` — การกรองใช้ `StaffLeave::isServiceAvailable()` ตัวเดียวกับ booking
 
 ### B3.2 เพิ่มบริการ
 
@@ -677,10 +847,15 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 | `time_slots` | required, array ≥ 1 |
 | `time_slots[].time_slot_id` | required, `exists:time_slots,id` |
 | `time_slots[].days` | required, array ≥ 1, ค่า 1-7 (1=จันทร์) |
-| `allow_staff_selection` | **ส่งได้แค่ `false`/`0`** — ส่ง `true` → 422 |
+| `allow_staff_selection` | **ส่งได้แค่ `false`/`0`** — ส่ง `true` → 422 พร้อมข้อความให้ไปเปิดทีหลัง |
 
 **ผลลัพธ์:** สร้าง `services` (บังคับ `allow_staff_selection=false`, `is_active=true`) + `service_capacity` (default 1/10) + `service_time_slot` ใน transaction เดียว
-`CreateServiceRequest.php` · `StaffServiceManagementService.php`
+
+> ⚠️ `POST /services` เปิดให้ **STAFF ทั่วไป** สร้างบริการได้
+> ถ้าต้องการจำกัดเฉพาะผู้ดูแล ต้องย้าย route ไป group `role:SUPER_ADMIN,HEALTH_CENTER_ADMIN`
+> ตอนนี้ STAFF สร้างบริการในศูนย์ตัวเองได้โดยไม่ต้องได้รับมอบหมาย
+
+`CreateServiceRequest::rules()` · `StaffServiceManagementService::createService()`
 
 ### B3.3 แก้ไขบริการ
 
@@ -693,13 +868,25 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 | `max_per_slot` / `max_per_day` | integer ≥ 1, `updateOrCreate` ค่าเดิมไว้ถ้าไม่ส่ง |
 | `time_slots` | ถ้าส่ง = แทนที่ชุดเดิมทั้งหมด (ดู B3.5) |
 
-`UpdateServiceRequest.php` · `StaffServiceManagementService.php`
+> การปิด `allow_staff_selection` เช็คคิวค้างของ **ทั้งบริการ** ไม่ใช่เฉพาะคิวที่ผูกหมอไว้
+
+`UpdateServiceRequest::rules()` · `StaffServiceManagementService::updateService()`
 
 ### B3.4 เปิด/ปิดบริการ + ลบ
 
 **`PATCH /v1/staff/services/{id}/toggle-status`** — สลับ `is_active` (ACTIVE/ปิดชั่วคราว)
-**`DELETE /v1/staff/services/{id}`** — **HC_ADMIN/SUPER_ADMIN เท่านั้น** (STAFF → 403)
-→ 422 ถ้ามีคิว CONFIRMED ตั้งแต่วันนี้ขึ้นไป: `"ไม่สามารถลบบริการได้ เนื่องจากมีคิวล่วงหน้าอยู่ N คิว"` (soft delete)
+**STAFF ทั่วไปเรียกได้** — ปิดบริการที่ศูนย์ตัวเองได้
+
+**`DELETE /v1/staff/services/{id}`** — **HC_ADMIN/SUPER_ADMIN เท่านั้น** (STAFF → 403 `"ไม่มีสิทธิ์ลบบริการ"`)
+→ 422 ถ้ามีคิว CONFIRMED ตั้งแต่วันนี้ขึ้นไป: `"ไม่สามารถลบบริการได้ เนื่องจากมีคิวล่วงหน้าอยู่ N คิว กรุณาจัดการคิวก่อน"`
+→ **soft delete** — บริการหายจาก `GET /staff/services` และจาก `A1.5` ทันที ทั้งที่ยังมีนัดหมายเก่าอยู่
+→ มีนิยามคิวค้างตัวเดียวกันทั้งระบบ ดู C.2
+
+**ข้อควรระวังเรื่อง scope ของการลบ:** ตรวจบทบาทก่อนแตะศูนย์
+STAFF ที่ไม่มีสิทธิ์จะได้ 403 แม้ส่ง `health_center_id` ผิดศูนย์มาด้วย
+(ต่างจาก endpoint ที่ตรวจศูนย์ก่อน แล้วจึงตรวจสิทธิ์ทีหลัง)
+
+`StaffServiceController::destroy()` · `StaffServiceManagementService::deleteService()`
 
 ### B3.5 ตั้งวัน/เวลาเปิดให้บริการ
 
@@ -720,19 +907,25 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 - **`days_mask` bitmask:** bit 0 = จันทร์ … bit 6 = อาทิตย์ (`1 << (day-1)`) — ค่า `127` = เปิดครบ 7 วัน
 - **กันไม่ให้ "ปิดวัน" ที่มีคิว CONFIRMED ในอนาคต** → 422 `"ไม่สามารถลบวันให้บริการได้ เนื่องจากมีคิวที่ยืนยันแล้วในอนาคต กรุณาจัดการคิวก่อน"`
 - ทำใน transaction + `lockForUpdate` + เขียน `AuditLog` (action `SERVICE_TIME_SLOT_DAYS_SYNC`)
-- **ช่วงเวลาที่เลือกต้องเป็นของศูนย์เดียวกับบริการ** → ต่างศูนย์ = 422 `"ช่วงเวลาที่เลือกไม่ได้อยู่ในศูนย์สุขภาพเดียวกับบริการ"` บังคับไว้ 2 ชั้น คือตรวจในโค้ด และ foreign key แบบ composite ในฐานข้อมูล (ตารางเชื่อมมีคอลัมน์ศูนย์ของตัวเอง ต้องตรงกับทั้งบริการและช่วงเวลา) — เดิมไม่เคยตรวจข้อนี้ จึงผูกช่วงเวลาข้ามศูนย์ได้
-`OperatingDayService.php` · `StaffServiceController.php`
+- **ช่วงเวลาที่เลือกต้องเป็นของศูนย์เดียวกับบริการ** → ต่างศูนย์ = 422 `"ช่วงเวลาที่เลือกไม่ได้อยู่ในศูนย์สุขภาพเดียวกับบริการ"` บังคับไว้ 2 ชั้น คือตรวจในโค้ด และ foreign key แบบ composite ในฐานข้อมูล
+  ตารางเชื่อมมีคอลัมน์ศูนย์ของตัวเอง ต้องตรงกับทั้งบริการและช่วงเวลา — ถ้าเพิ่มจุดเขียนใหม่ต้องส่งศูนย์มาด้วย ไม่งั้นจะถูกฐานข้อมูลปฏิเสธ
+- **ช่วงเวลาต้องเปิดใช้งานอยู่** → ช่วงที่ถูกปิดใช้งานอยู่ → 422 `"ช่วงเวลาไม่ถูกต้องหรือไม่เปิดใช้งาน"`
+  ต้องเปิดช่วงเวลาให้ใช้งานก่อนจึงจะตั้งวันให้บริการได้ (ลำดับคือ สร้าง/เปิดช่วงเวลา → ตั้งวันให้บริการ → ผูกหมอ)
+
+`OperatingDayService::syncDays()` · `OperatingDayService::validateSlotDays()` · `StaffServiceController::syncTimeSlotDays()`
 
 ---
 
 ## B4. เปิดเลือกหมอ (สำคัญ — ต้องทำตามลำดับ)
 
-> ⚠️ **ลำดับห้ามสลับ** — ถ้าผูกหมอก่อนแล้วค่อยเปิด flag จะ 422
+> ⚠️ **ลำดับห้ามสลับ** — ถ้าเปิด flag ก่อนผูกหมอจะ 422
+> และ **สร้างบริการตอน `POST /services` เปิด flag ไม่ได้เลย** — ต้องแก้ทีหลังเท่านั้น
 
 ### ขั้นที่ 1 — ดูหมอที่จะผูก
 
-**`GET /v1/staff/roster`** (B8.1) → ได้ `staff.id` พร้อม `category_id`
+**`GET /v1/staff/roster`** (B8.1) → ได้ `staff.id` พร้อมหมวดหมู่
 > หมอที่ผูกได้ต้องเป็น **หมวดหมู่เดียวกับบริการ** (เช่น บริการหมวด "แพทย์แผนไทย" ต้องผูกหมอหมวดนั้น)
+> **บริการที่ไม่มี `category_id` จะไม่ตรวจหมวดหมู่** — ผูกหมออะไรก็ผ่าน
 
 ### ขั้นที่ 2 — ผูกหมอกับบริการ
 
@@ -743,13 +936,16 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 
 | กติกา | ผลลัพธ์ |
 |---|---|
-| `staff_ids` ต้องมี key เสมอ | ไม่ส่ง → 422; ส่ง `[]` = ยกเลิกทั้งหมด |
+| `staff_ids` ต้องมี key เสมอ (`present`) | ไม่ส่ง → 422 `"กรุณาระบุ staff_ids (ส่ง [] เพื่อยกเลิกทั้งหมด)"` · ส่ง `[]` = ยกเลิกทั้งหมด |
+| หมอต้องมีอยู่จริง | 422 `"ไม่พบเจ้าหน้าที่ที่ระบุในระบบ"` |
 | หมอต้องอยู่ศูนย์เดียวกัน | 422 `"เจ้าหน้าที่ X ไม่สังกัด ศูนย์สุขภาพนี้"` |
 | หมอต้องอยู่หมวดหมู่เดียวกับบริการ | 422 `"หมอ X ไม่อยู่ในหมวดหมู่เดียวกับบริการนี้"` |
 | **การถอดหมอออก** ที่มีคิว CONFIRMED อนาคต | 422 `"ไม่สามารถแกะเจ้าหน้าที่ออกจากบริการได้..."` |
 
-เขียน `AuditLog` action `SERVICE_SELECTABLE_STAFF_SYNC` (before/after)
-`StaffServiceController.php`
+- **ตรวจการถอดทีละคน** เฉพาะคนที่กำลังจะถูกถอด — คนที่ยังอยู่ไม่ถูกตรวจเรื่องคิวค้าง
+- ทั้งหมดอยู่ในธุรกรรมเดียว · เขียน `AuditLog` action `SERVICE_SELECTABLE_STAFF_SYNC` (before/after)
+
+`SyncServiceStaffRequest::rules()` · `StaffServiceController::syncStaff()`
 
 ### ขั้นที่ 3 — เปิด flag
 
@@ -773,6 +969,14 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 
 > `allow_staff_selection` เป็น **column ของ service แต่ละแถว** — ไม่มี config กลาง ไม่มีการซิงก์ข้ามศูนย์ แต่ละศูนย์ตั้งอิสระ
 
+**สิ่งที่มักเข้าใจผิดในหัวข้อนี้:**
+
+- การผูกหมอ = `service_staff` → **หมอที่ผู้รับบริการเลือกได้**
+- การมอบหมายให้ดูแลคิว = `service_user` → **ใครมีสิทธิ์เห็น/แตะคิว** (B5)
+  **เป็นคนละเรื่องกัน** — การเปิด flag ไม่ได้ทำให้ได้ `service_user` โดยอัตโนมัติ
+- เปิด flag แล้วโควตานับจาก `service_staff` ที่ยังให้บริการอยู่
+  ต่างจาก `PER_MASSEUSE` แบบไม่เปิด flag ที่นับจาก `service_user` (ดู 0.4) — **สองคนละชุดนับ**
+
 ---
 
 ## B5. มอบหมายผู้รับผิดชอบบริการ
@@ -786,8 +990,19 @@ envelope มี `health_center_status` ด้วย → **เช็คสถา�
 
 | กติกา | ผลลัพธ์ |
 |---|---|
+| `user_ids` ต้องมี key เสมอ (`present`) | ไม่ส่ง → 422 `"กรุณาระบุ user_ids (ส่ง [] เพื่อยกเลิกทั้งหมด)"` · ส่ง `[]` = ยกเลิกทั้งหมด |
+| ผู้ใช้ต้องมีอยู่จริง | 422 `"ไม่พบผู้ใช้ที่ระบุ"` |
 | ผู้ใช้ต้องอยู่ศูนย์เดียวกัน | 422 `"ผู้ใช้ X ไม่สังกัด ศูนย์สุขภาพนี้"` |
 | ผู้ใช้ต้องมี role STAFF | 422 `"ผู้ใช้ X ไม่มีบทบาท STAFF"` |
+
+> **ตรวจคนที่ถูกระบุทุกคนก่อนเขียน** — ถ้าคนที่ 5 จาก 10 ผิดเงื่อนไข ก็ไม่มีการเขียนค่าใด ๆ
+> ต่างจาก B4 ที่ตรวจการถอดหมอทีละคน
+
+**ไม่มีเงื่อนไขคิวค้าง** — ถอดผู้รับผิดชอบออกได้เลยแม้ยังมีคิวยืนยันอยู่
+เพราะการถอดผู้มอบหมายไม่ทำให้คิวหาย แต่เป็นการถอด "สิทธิ์เข้าถึง" ไม่ใช่การเปลี่ยนนัดหมาย
+(ต่างจากการถอดหมอใน B4 ที่กระทบการเลือกหมอของผู้รับบริการ)
+
+**ไม่เขียน `AuditLog`** — เป็นการเปลี่ยนการตั้งค่าความปลอดภัยระดับบริการ ไม่ใช่ข้อมูลผู้รับบริการ
 
 **ผลข้างเคียง — นี่คือขอบเขตที่ใช้คุมทุกทางที่ดูหรือแตะคิว (ดู 0.3a):**
 
@@ -804,7 +1019,7 @@ STAFF ที่ไม่ได้ถูก assign บริการนั้น
 | `PATCH /staff/patients/{id}/contact` | 403 ถ้าผู้รับบริการไม่เคยมีคิวในบริการที่ assign |
 | `POST /staff/appointments/walk-in` | 403 ทุกกรณี — เป็นหน้าที่ผู้ดูแลศูนย์อยู่แล้ว ไม่เกี่ยวกับการ assign |
 
-`StaffServiceController::syncAssignees()` · `ResolvesHealthCenterScope::denyIfOutOfServiceScope()`
+`SyncAssigneesRequest::rules()` · `StaffServiceController::syncAssignees()` · `ResolvesHealthCenterScope::denyIfOutOfServiceScope()`
 
 > **บริการที่ไม่ผูกชื่อบุคลากร** (นับตามช่วงเวลา/ทั้งวัน) คิวจะไม่มีผู้ถูกระบุ
 > ทางที่สองจึงใช้ไม่ได้ คิวของบริการนั้นจะมีแต่ผู้ดูแลศูนย์ที่ปิดได้
@@ -820,28 +1035,45 @@ STAFF ที่ไม่ได้ถูก assign บริการนั้น
 | Method | Endpoint | Role | หมายเหตุ |
 |---|---|---|---|
 | `GET` | `/v1/staff/admin/time-slots` | HC_ADMIN, SUPER_ADMIN | HC_ADMIN ไม่ต้องส่ง (ได้ศูนย์ตนเอง); SUPER_ADMIN **ต้องส่ง `health_center_id`** (ไม่ส่ง = 422, ไม่มีศูนย์นั้น = 404) |
-| `PATCH` | `/v1/staff/admin/time-slots/{id}/toggle-status` | HC_ADMIN, SUPER_ADMIN | ข้ามศูนย์ไม่ได้ (404) |
+| `PATCH` | `/v1/staff/admin/time-slots/{id}/toggle-status` | HC_ADMIN, SUPER_ADMIN | ข้ามศูนย์ไม่ได้ (404) · **ปิดไม่ได้ถ้ายังมีคิวค้าง → 422** |
 | `POST` | `/v1/staff/admin/time-slots` | **SUPER_ADMIN เท่านั้น** | บังคับ `health_center_id` |
-| `PUT` | `/v1/staff/admin/time-slots/{id}` | **SUPER_ADMIN เท่านั้น** | บังคับ `health_center_id`; slot ต้องเป็นของศูนย์นั้น |
-| `DELETE` | `/v1/staff/admin/time-slots/{id}` | **SUPER_ADMIN เท่านั้น** | **ไม่รองรับ** — 422 ทุกกรณี |
+| `PUT` | `/v1/staff/admin/time-slots/{id}` | **SUPER_ADMIN เท่านั้น** | บังคับ `health_center_id`; slot ต้องเป็นของศูนย์นั้น · ปิด (`is_active: false`) ไม่ได้ถ้ายังมีคิวค้าง |
+| `DELETE` | `/v1/staff/admin/time-slots/{id}` | **SUPER_ADMIN เท่านั้น** | **ไม่รองรับ** — 422 ทุกกรณี แม้จะไม่มีอะไรให้ลบ |
 
 **สร้าง:**
 ```json
 { "health_center_id": 1, "start_time": "09:00", "end_time": "09:30", "is_active": true }
 ```
-- เวลา format `HH:MM`, `end_time` ต้องมากกว่า `start_time`
-- **ช่วงเวลาที่ทับกับช่วงเดิมของศูนย์เดียวกัน → 422** `"มีช่วงเวลาที่ทับซ้อนกันอยู่แล้วในศูนย์นี้"` — ตรวจการทับจริง (ไม่ใช่เทียบเวลาให้ตรงกันทุกตัว) ช่วงที่ต่อกันพอดี เช่น 09:00-09:30 กับ 09:30-10:00 ไม่ถือว่าทับ
-- ทับกับช่วงเวลาของศูนย์อื่น → สร้างได้ (แต่ไปผูกกับบริการข้ามศูนย์ไม่ได้ ดู B4/B7.2)
-- `label` และ `sort_order` ถูกสร้างอัตโนมัติ; `is_active` ส่งมาได้ถ้าไม่ส่งค่าเริ่มต้นคือเปิดใช้งาน
+- เวลา format `HH:MM` (`H:i`), `end_time` ต้องมากกว่า `start_time`
+- **ช่วงเวลาที่ทับกับช่วงเดิมของศูนย์เดียวกัน → 422** `"มีช่วงเวลาที่ทับซ้อนกันอยู่แล้วในศูนย์นี้"`
+  ตรวจการทับจริง (ไม่ใช่เทียบเวลาให้ตรงกันทุกตัว) ช่วงที่ต่อกันพอดี เช่น 09:00-09:30 กับ 09:30-10:00 ไม่ถือว่าทับ
+- ทับกับช่วงเวลาของศูนย์อื่น → สร้างได้ (แต่ไปผูกกับบริการข้ามศูนย์ไม่ได้ ดู B3.5)
+- **`label` และ `sort_order` ถูกสร้างอัตโนมัติ ส่งมาเองไม่ได้**
+  - `label` = `"09:00 - 09:30 น."` (มีช่องว่างรอบขีดและต่อท้ายด้วย `น.`)
+  - `sort_order` = นาทีนับจากเที่ยงคืน ทำให้เรียงตามเวลาเริ่มอัตโนมัติ
+- `is_active` ส่งมาได้ ถ้าไม่ส่งค่าเริ่มต้นคือเปิดใช้งาน
+- **แก้เวลาแล้ว `label` / `sort_order` ถูกสร้างใหม่ให้อัตโนมัติเช่นกัน**
+
+> `time_label` ใน response ที่ผู้รับบริการเห็นคือค่า `label` นี้ จึงมีรูปแบบ `"09:00 - 09:30 น."`
+> ไม่ใช่ `"09:00-09:30"` ตามที่มักเขียนในตัวอย่าง
 
 **การตอบกลับ** — ทุกช่วงเวลาที่คืนมาระบุ `health_center` ของตัวเอง (เฉพาะ endpoint นี้ ที่อื่นที่ฝังช่วงเวลาไว้ เช่น นัดหมายของผู้รับบริการ จะไม่มีข้อมูลนี้)
 
 **ลบ** → ไม่รองรับ 422 `"ไม่สามารถลบช่วงเวลาได้ กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน"`
 เหตุผลตาม ADR-0001: ช่วงเวลาถูกนัดหมายและถูกกำหนดวันให้บริการอ้างอิงอยู่ การลบจะทำให้ประวัตินัดหมายหายหรือวันให้บริการหายเงียบ ๆ
 
-**ปิดใช้งานแทน** → เมื่อปิด ช่วงเวลาหายจากผู้รับบริการทันทีทุกบริการของศูนย์ แต่ **วันให้บริการที่ตั้งไว้ยังอยู่ครบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
+**ปิดใช้งานแทน** → เมื่อปิด ช่วงเวลาหายจากผู้รับบริการทันทีทุกบริการของศูนย์
+แต่ **วันให้บริการที่ตั้งไว้ (`service_time_slot`) ยังอยู่ครบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
+
+> ⚠️ **ปิดช่วงเวลาที่ยังมีคิวค้างไม่ได้ → 422**
+> ใช้เกณฑ์คิวค้างตัวเดียวกับทั้งระบบ (`status = CONFIRMED` และ `appointment_date >= วันนี้`)
+> เหตุผลเดียวกับที่ลบบริการไม่ได้ — ปิดแล้วนัดหมายที่ผู้รับบริการถือไว้จะถูกทิ้งโดยไม่มีคำเตือน
+
+`StaffTimeSlotController` · `StaffTimeSlotManagementService`
 
 > ✅ **ข้อยกเว้นที่เคยเป็น bug แก้แล้ว:** controller นี้เคยไม่ใช้ `ResolvesHealthCenterScope` — SUPER_ADMIN ไม่ส่ง `health_center_id` ได้สร้างช่วงเวลาที่ไม่ผูกศูนย่อจริง และแก้/ลบข้ามศูนย์ได้ ตอนนี้ทุก endpoint ใช้ตัวแก้ scope กลางเหมือนที่เหลือ และฐานข้อมูลบังคับศูนย์ไม่ให้ว่างด้วย
+
+ดูรายละเอียดของการแก้ครั้งนั้นได้ที่หัวข้อ **C.1** ท้ายเอกสาร
 
 ---
 
@@ -853,15 +1085,16 @@ STAFF ที่ไม่ได้ถูก assign บริการนั้น
 
 | query | ผล |
 |---|---|
-| `date` | default วันนี้ |
-| `service_id` | กรองรายบริการ |
-| `status` | `CONFIRMED/COMPLETED/CANCELLED/NO_SHOW` |
-| `health_center_id` | SUPER_ADMIN เท่านั้น |
+| `date` | `Y-m-d`, default วันนี้ · ไม่จำกัดวัน (ดูวันอนาคต/ย้อนหลังได้) |
+| `service_id` | กรองรายบริการ (`exists:services,id`) |
+| `status` | `CONFIRMED`/`COMPLETED`/`CANCELLED`/`NO_SHOW` |
+| `health_center_id` | SUPER_ADMIN เท่านั้น; ไม่ส่ง = ทุกศูนย์ |
 
-**STAFF (ไม่ใช่ admin)** → เห็น**เฉพาะ**บริการที่ถูก assign ให้ตัวเอง และถ้า query `service_id` ที่ไม่ได้ assign → **403**
-`StaffAppointmentController::index()` · `StaffAppointmentService::getDailyAppointments()`
+- **STAFF (ไม่ใช่ admin)** → เห็น**เฉพาะ**บริการที่ถูก assign ให้ตัวเอง และถ้า query `service_id` ที่ไม่ได้ assign → **403**
+- ไม่ paginate — คืนทั้งวันที่เป็นรายการ (`data` + `date`)
+- ข้อมูลผู้รับบริการถูก **masked** เสมอ — `patient.masked_name`, `patient.masked_phone`
 
-> ข้อมูลผู้รับบริการใน response ถูก **masked** เสมอ — `patient.masked_name`, `patient.masked_phone` (AppointmentResource.php)
+`StaffAppointmentController::index()` · `StaffAppointmentFilterRequest::rules()` · `StaffAppointmentService::getDailyAppointments()`
 
 ### B7.2 เปลี่ยนสถานะคิว
 
@@ -884,7 +1117,13 @@ STAFF ที่ไม่ได้ถูก assign บริการนั้น
 - **การแก้ "ไม่มาตามนัด" ที่ระบบเปลี่ยนเอง ใช้เกณฑ์เดียวกัน** — ไม่มีช่องทางพิเศษ
 - **ตรวจขอบเขตก่อนกฎการเปลี่ยนสถานะ** ดังนั้นผู้เรียกที่ไม่มีสิทธิ์จะได้ 403 แม้ส่งสถานะผิดวิธี
   ผลข้างเคียง: ไม่เปิดเผยว่าสถานะไหนถูก — ถือว่าถูกต้องเพราะเขายังไม่มีสิทธิ์แตะคิวนี้
-`UpdateAppointmentStatusRequest.php` · `StaffAppointmentService.php`
+- **ไม่เขียน audit log** — เป็นการเปลี่ยนสถานะคิว ไม่ใช่การเปิดข้อมูลผู้รับบริการ
+- ตั้งเป็น `CANCELLED` จะเขียน `cancellation_reason` + `cancelled_at` ลงแถว
+- **`status_auto_changed_at` ถูกเก็บไว้เสมอ** แม้เจ้าหน้าที่จะเปลี่ยนสถานะทับ
+  จึงยังบอกได้ว่า "ครั้งนี้ระบบเป็นคนเปลี่ยนเองเมื่อไหร่" แม้สถานะปัจจุบันถูกแก้แล้ว
+- ตั้งเป็น `CANCELLED` จะเขียน `cancellation_reason` + `cancelled_at` ลงแถว
+
+`UpdateAppointmentStatusRequest::rules()` · `StaffAppointmentService::updateAppointmentStatus()`
 
 ### B7.3 นัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์ (Walk-in)
 
@@ -937,13 +1176,22 @@ route อยู่ใน group `role:SUPER_ADMIN,HEALTH_CENTER_ADMIN` จึง�
 | `service_id` | required — **ต้องเป็นของศูนย์ที่ scope ไว้** |
 | `time_slot_id` | required — ต้องเปิดใน**วันนี้** (ตรวจด้วย `days_mask` ของวันนี้) และต้องเป็นของศูนย์เดียวกัน |
 | `staff_id` | optional — บังคับจริงถ้าบริการเปิดให้เลือกบุคลากร ต้องอยู่ใน `service_staff` ของบริการนั้น |
-| `patient_right_id` | optional — ต้องเป็นสิทธิของผู้รับบริการที่ `cid` นั้น |
+| `patient_right_id` | optional — ต้องเป็นสิทธิของผู้รับบริการที่ `cid` นั้น (**ผูกกับ cid ไม่ใช่ user**) |
 
 **ศูนย์ที่ถูกบันทึกมาจากบริการที่เลือกเสมอ** — ไม่ได้มาจากค่าที่ส่งมา ดังนั้นการส่ง `health_center_id` ของศูนย์อื่นโดยผู้ดูแลศูนย์จะไม่ทำให้นัดหมายไปตกศูนย์อื่น แต่จะถูกปฏิเสธเพราะบริการที่เลือกไม่ใช่ของศูนย์นั้น
 
 **`appointment_date` ไม่ต้องส่ง** — ระบบใส่วันนี้ให้อัตโนมัติ
 
+**ที่ต่างจาก `POST /patient/book`:**
+
+| | patient book | walk-in |
+|---|---|---|
+| เงื่อนไขเวลาสิ้นสุดของรอบ | **ตรวจ** ย้อนหลังไม่ได้ | **ไม่ตรวจ** เพราะมาถึงหน้าเคาน์เตอร์แล้ว |
+| `patient_right_id` ผูกกับ | user ของผู้เรียก | `cid` ที่ส่งมา |
+| สร้างผู้รับบริการใหม่ | ไม่ได้ (ต้อง login) | ได้ ถ้า `cid` ยังไม่มี |
+
 **ผู้รับบริการเดิม vs ใหม่**
+
 | กรณี | ระบบทำอะไร |
 |---|---|
 | `cid` ยังไม่มี | สร้างผู้รับบริการใหม่พร้อมข้อมูลครบ และสร้างสิทธิหลักจาก `right_type_id` (ถ้าส่งมา) |
@@ -952,6 +1200,8 @@ route อยู่ใน group `role:SUPER_ADMIN,HEALTH_CENTER_ADMIN` จึง�
 | `cid` ใหม่ + เบอร์โทรไปตรงกับผู้รับบริการคนอื่น | **422 พร้อมเลขบัตรประชาชนของเจ้าของเบอร์** — ไม่ใช่ 500 เพราะเจ้าหน้าที่ต้องรู้ว่าต้องตรวจสอบอะไร |
 | ผู้รับบริการเดิมมีสิทธิหลักแล้ว | ใช้สิทธิหลักเดิม ไม่สร้างสิทธิซ้ำ และ `right_type_id` ที่ส่งมาจะไม่ถูกใช้ |
 | ไม่ระบุ `patient_right_id` | ใช้สิทธิหลักของผู้รับบริการ (ถ้าไม่มีสิทธิเลย → นัดหมายไม่มีสิทธิผูกไว้) |
+
+> เหตุผลที่ยืนยันตัวตนด้วยเบอร์+วันเกิด: ถ้าเก็บข้อมูลใหม่ทับของเดิม ตัวตนที่บันทึกไว้จะไม่ตรงกับที่ผู้รับบริการใช้ยืนยัน
 
 **ตรวจเพิ่มก่อนจอง (นอกจากชั้นของการจองปกติ):**
 - บุคลากรทั้งหมดลาวันนี้ → **422** `"บริการนี้ปิดชั่วคราว เนื่องจากเจ้าหน้าที่ทั้งหมดลางานในวันนี้"`
@@ -990,12 +1240,20 @@ route อยู่ใน group `role:SUPER_ADMIN,HEALTH_CENTER_ADMIN` จึง�
 
 ### B7.5 เปิดดูข้อมูลผู้รับบริการแบบไม่ปิดบัง (PDPA)
 
-**`POST /v1/staff/appointments/{id}/unmask`** — ไม่ต้องส่ง body
+**`POST /v1/staff/appointments/{id}/unmask`**
+
+```json
+{ "health_center_id": 1 }   // required เฉพาะ SUPER_ADMIN
+```
 
 - **ข้อมูลอ่อนไหวตาม PDPA** — เปิดข้อมูลตัวตนจริง
-- **throttle `unmask` 10 ครั้ง/นาที** (ดู B2.3)
+- **ไม่ต้องส่ง body สำหรับ STAFF / HC_ADMIN** เพราะศูนย์ถูกบังคับเป็นศูนย์ตนเอง
+  แต่ **SUPER_ADMIN ต้องส่ง `health_center_id`** ไม่ส่ง = 422 (ไม่ใช่ endpoint ไม่ต้องใช้ศูนย์)
+- **throttle `unmask` 10 ครั้ง/นาที** (ดู B2.3) — เข้มกว่าโควตารวมของเจ้าหน้าที่เสมอ
 - **เขียน `AuditLog` action `UNMASK_PATIENT_DATA` ก่อนคืนข้อมูลทุกครั้ง**
-- คืน `cid`, `full_name`, `phone_number`, `birth_date`, `gender`, `address`, `rights[]` แบบเต็ม
+- คืน `id`, `cid`, `full_name` (ชื่อ + นามสกุลเชิงเส้น), `phone_number`, `birth_date`,
+  `gender`, `address` (เฉพาะ `full_address`), `rights[]` — **ทั้งหมดเป็นค่าจริง ไม่ mask**
+- audit payload มีแค่ `appointment_id` — ไม่บันทึกข้อมูลตัวตนลง log
 - **ขอบเขตบริการ (403)** — STAFF ต้องเข้าเงื่อนไขใดเงื่อนหนึ่งใน 0.3a
   คือ มีการมอบหมายบริการนั้น **หรือ** เป็นผู้ถูกระบุในคิวนี้
 - **การถูกปฏิเสธจะไม่เขียน audit log** เพราะการเขียน log แปลว่ามีการเปิดข้อมูล ซึ่งไม่ได้เกิดขึ้น
@@ -1015,7 +1273,7 @@ route อยู่ใน group `role:SUPER_ADMIN,HEALTH_CENTER_ADMIN` จึง�
 
 ## B8. Roster (ทะเบียนบุคลากร/หมอนวด)
 
-> `staff` = **profile คนงาน** (มี `category_id`, `position`, `user_id`) — คนละชั้นกับ `users` = บัญชี login (B12)
+> `staff` = **profile คนงาน** (มี `category_id`, `position`, `user_id`) — ดู 0.3b และ B12
 
 ### B8.1 ดูรายชื่
 
@@ -1028,12 +1286,22 @@ route อยู่ใน group `role:SUPER_ADMIN,HEALTH_CENTER_ADMIN` จึง�
 
 **ทุกรายการมี** `id`, `name`, `position`, `category`, `status`, `user`, **`health_center`**
 
+`user` คืน `{ id, username }` — โปรไฟล์ที่ยังไม่มีบัญชีจะได้ `id: null`
+เพื่อให้ผู้ดูแลเห็นว่าใครเข้าใช้ระบบได้แล้ว
+
 **`effective_status` (มีเฉพาะตอนส่ง `?date=`):**
 ```
 Staff.status = ACTIVE + มี StaffLeave วันนั้น  →  effective_status = 'LEAVE'
 กรณีอื่น                                        →  effective_status = ค่าเดิมของ status
 ```
+
+**วันลากรองจากศูนย์เดียวกันเท่านั้น** — ถ้าไม่กรองศูนย์ บุคลากรของศูนย์อื่นที่ลาวันเดียวกันจะโผล่มา
+
 `StaffRosterService::index()` — logic อยู่ใน service ตอนนี้ `StaffRosterController` แค่เรียกใช้
+
+> ⚠️ **roster ไม่ถูกจำกัดด้วยขอบเขตบริการ** — STAFF เห็นทั้งศูนย์เสมอ (ดู 0.3a)
+> เพราะใครเข้าเวรหรือลาวันนี้เป็นเรื่องของศูนย์ ไม่ใช่ของบริการเดียว
+> แตกต่างจากรายการคิวที่ถูกจำกัดตามบริการ
 
 > **สองกลไกของ "หมอไม่ว่าง" — อย่าสับสน**
 > - `StaffLeave` row = **ลาเฉพาะวัน** (B9)
@@ -1042,21 +1310,41 @@ Staff.status = ACTIVE + มี StaffLeave วันนั้น  →  effective_
 
 ### B8.2 เพิ่มบุคลากร
 
-**`POST /v1/staff/roster`**
+**`POST /v1/staff/roster`** — **HC_ADMIN / SUPER_ADMIN เท่านั้น** (STAFF → 403)
 ```json
-{ "name": "แม่หมอ...", "category_id": 1, "position": "หมอนวด", "status": "ACTIVE" }
+{ "user_id": 10, "name": "แม่หมอ...", "category_id": 1, "position": "หมอนวด", "status": "ACTIVE" }
 ```
-- `name` required, max 255
-- `status` **required** ∈ `ACTIVE / INACTIVE / LEAVE`
-- `category_id`, `position` optional
-- **STAFF ธรรมดาทำได้จริง** (ไม่จำกัดเฉพาะศูนย์ตัวเองถ้า scope ตรง)
+
+| field | rule |
+|---|---|
+| **`user_id`** | **required** — ต้องเป็นบัญชีที่**ยังไม่มีโปรไฟล์บุคลากร** และยังไม่ถูกลบ มิฉะนั้น 422 |
+| `name` | required, max 255 |
+| `status` | **required** ∈ `ACTIVE / INACTIVE / LEAVE` |
+| `category_id` | optional, `exists:categories,id` |
+| `position` | optional, max 100 |
+
+**`health_center_id` ไม่ต้องส่ง** — นำจากศูนย์ของ `user_id` เสมอ ไม่ใช่ศูนย์ของผู้เรียก
+ไม่งั้นผู้ดูแลศูนย์หนึ่งจะย้ายคนของอีกศูนย์มาไว้ใต้ศูนย์ตนได้
+→ HC_ADMIN ส่ง `user_id` ของศูนย์อื่น → **404** `"ไม่พบบัญชีเจ้าของที่ระบุ"`
+
+> เอกสารเดิมไม่มี `user_id` เลย และเขียนว่า "STAFF ธรรมดาทำได้จริง" — ผิดทั้งสองจุด
+> route อยู่ใน group `role:SUPER_ADMIN,HEALTH_CENTER_ADMIN`
+
+`StaffRosterController::store()` · `CreateStaffRequest::rules()`
 
 ### B8.3 สลับเวร (Active ↔ Leave)
 
 **`PATCH /v1/staff/roster/{id}/toggle-duty`**
-- `INACTIVE` → **422** `"ไม่สามารถสลับสถานะได้ เนื่องจากบุคลากรถูกระงับการใช้งาน"` (ต้องเปิดใช้งานก่อน)
-- `ACTIVE → LEAVE` ที่มีคิว CONFIRMED ตั้งแต่วันนี้ → **422** `"ไม่สามารถปิดสถานะเจ้าหน้าที่ได้ เนื่องจากมีคิวที่จองไว้แล้ว N คิว"`
-- `LEAVE → ACTIVE` = เปิดให้จองกลับทันที ไม่มีเงื่อนไขกิจกรรม
+
+| เงื่อนไข | ผล |
+|---|---|
+| `status = INACTIVE` | **422** `"ไม่สามารถสลับสถานะได้ เนื่องจากบุคลากรถูกระงับการใช้งาน"` (ต้องเปิดใช้งานก่อน — ทำได้ที่ B8.2 ตอนสร้าง) |
+| `ACTIVE → LEAVE` ที่มีคิว CONFIRMED ตั้งแต่วันนี้ | **422** `"ไม่สามารถปิดสถานะเจ้าหน้าที่ได้ เนื่องจากมีคิวที่จองไว้แล้ว N คิว กรุณาจัดการคิวก่อน"` |
+| `LEAVE → ACTIVE` | เปิดให้จองกลับทันที ไม่มีเงื่อนไขกิจกรรม |
+
+- **เปิดให้ STAFF ทั่วไปเรียกได้** — route อยู่ใน group ทุกบทบาท (ศูนย์ถูกบังคับเป็นศูนย์ตนเอง)
+- โปรไฟล์ของศูนย์อื่น → **404**
+- **ไม่มีการเขียน audit log** — เป็นการสลับสถานะการให้บริการ ไม่ใช่การแตะข้อมูลผู้รับบริการ
 
 `StaffRosterController::toggleDuty()`
 
@@ -1066,10 +1354,18 @@ Staff.status = ACTIVE + มี StaffLeave วันนั้น  →  effective_
 
 ### B9.1 ดูวันลา
 
-**`GET /v1/staff/leaves?date=&staff_user_id=`**
-- HC_ADMIN/STAFF = ศูนย์ตัวเอง; SUPER_ADMIN = ทุกศูนย์
-- เรียงวันที่มาก→น้อย
-- `staff_user_id` คือ **user id** (บัญชี) ไม่ใช่ staff id
+**`GET /v1/staff/leaves?date=&staff_user_id=`** — ไม่ paginate คืนทั้งหมด
+
+| query | ผล |
+|---|---|
+| — | HC_ADMIN/STAFF = ศูนย์ตัวเอง; SUPER_ADMIN ไม่ส่ง = **ทุกศูนย์**; ส่ง = กรองศูนย์นั้น |
+| `?date=` | เฉพาะวันนั้น |
+| `?staff_user_id=` | **user id** (บัญชี) ไม่ใช่ staff id |
+
+- เรียงวันที่มาก→น้อย · คืนพร้อมชื่อบัญชีของคนที่ลา (`id`, `name`, `username`)
+- **ไม่จำกัดด้วยขอบเขตบริการ** — เช่นเดียวกับ roster เพราะวันลาเป็นเรื่องของศูนย์
+
+`StaffLeaveController::index()`
 
 ### B9.2 ลงวันลา
 
@@ -1080,11 +1376,17 @@ Staff.status = ACTIVE + มี StaffLeave วันนั้น  →  effective_
 
 | field | rule |
 |---|---|
-| `staff_user_id` | required, `exists:users` (ต้องยังไม่ถูกลบ) |
+| `staff_user_id` | **STAFF ส่งไม่ต้อง** (ระบบใส่ให้) · ผู้ดูแลขึ้นไป **required** · ต้องเป็น user ที่ยังไม่ถูกลบ |
 | `leave_date` | required, **≥ วันนี้** (ย้อนหลังไม่ได้) |
 | `reason` | optional, max 500 |
 
-**สิทธิ์:** STAFF ธรรมดา → ระบบบังคับ `staff_user_id` = ตัวเองเสมอ · HC_ADMIN → ลงให้ใครในศูนย์ตัวเองก็ได้ · SUPER_ADMIN → ทุกที่
+**สิทธิ์:**
+
+| role | ลงให้ใครได้ | ไม่ผ่าน |
+|---|---|---|
+| STAFF | บังคับเป็นตัวเองเสมอ (ส่งมาหรือไม่ส่งก็ได้) | ระบุคนอื่น → 422 `"ลาด้วยตนเองได้ ระบุเจ้าหน้าที่ท่านลาด้วยตนเองไม่ได้"` |
+| HC_ADMIN | ใครในศูนย์ตัวเองก็ได้ | คนนอกศูนย์ → 422 `"ไม่พบเจ้าหน้าที่ที่ระบุในศูนย์ของคุณ"` |
+| SUPER_ADMIN | ทุกที่ | — |
 
 **กติกาสำคัญ 4 ข้อ:**
 1. **บล็อก 422** ถ้าหมอคนนั้นมีคิว `CONFIRMED` ในวันที่ลา → `"ไม่สามารถลงวันลาได้ เนื่องจากมีคิวที่จองไว้แล้ว N คิวในวันนี้"`
@@ -1092,18 +1394,26 @@ Staff.status = ACTIVE + มี StaffLeave วันนั้น  →  effective_
 3. **บัญชีที่ไม่มีโปรไฟล์บุคลากร ลาไม่ได้** → 422 `"บัญชีนี้ยังไม่มีโปรไฟล์บุคลากรในศูนย์สุขภาพนี้ กรุณาเพิ่มโปรไฟล์ก่อนลงวันลา"`
    ระบบไม่รู้ว่าคนนี้คือใคร การเดาจากหมวดหมู่เคยทำให้ผูกผิดคน จึงไม่เดาแล้ว
 4. **วันลาเชื่อผูกกับ `staff.user_id`** — โปรไฟล์ที่ไม่ได้ผูกบัญชีถือว่า "ไม่ลาผ่านระบบนี้" เสมอ
+   → ต้องมีโปรไฟล์ **ของศูนย์นั้น** ไม่ใช่แค่มีที่ไหนบ้าง
+
+> เอกสารเดิมเขียนว่าระบบเดาโปรไฟล์ให้เมื่อเจอคนที่ตรงเงื่อนไขเดียว — ผิด ปัจจุบันไม่เดาแล้ว
 
 `StaffLeaveController::store()` · `StoreLeaveRequest::rules()`
 
 ### B9.3 ยกเลิกวันลา
 
-**`DELETE /v1/staff/leaves/{id}`**
+**`DELETE /v1/staff/leaves/{id}`** — hard delete (ไม่ใช่ soft delete)
 
 | role | เงื่อนไข | ไม่ผ่าน |
 |---|---|---|
 | STAFF | ลบได้เฉพาะของตัวเอง | **404** (ไม่ใช่ 403 — ปิดบังการมีอยู่) |
 | HC_ADMIN | ลบได้เฉพาะของศูนย์ตัวเอง | 404 |
 | SUPER_ADMIN | ลบได้ทุกที่ | — |
+
+- **ไม่มีการตรวจคิวค้าง** ต่างจากตอนลงวันลา — ยกเลิกวันลาไม่กระทบคิวที่จองไว้แล้ว
+- ไม่มีการเขียน audit log — เป็นการแก้ตารางวันลา ไม่ใช่การเปิดข้อมูลผู้รับบริการ
+
+`StaffLeaveController::destroy()`
 
 ### B9.4 เช็คบริการว่างให้บริการวันนั้นไหม
 
@@ -1113,15 +1423,29 @@ Staff.status = ACTIVE + มี StaffLeave วันนั้น  →  effective_
 ```
 
 **ใช้เมื่อไหร่:** อยากเช็คบริการเดียวโดยไม่ต้องดึงรายการทั้งหมด
-**แหล่งข้อมูลหลัก** ของความพร้อมของบริการคือ `GET /v1/staff/services?date=` (B3.1) ซึ่งคืนรายการเฉพาะที่พร้อม — endpoint นี้เป็นตัวย่อยจาก **rule เดียวกัน** (`StaffLeave::isServiceAvailable`)
+**แหล่งข้อมูลหลัก** ของความพร้อมของบริการคือ `GET /v1/staff/services?date=` (B3.1) ซึ่งคืนรายการเฉพาะที่พร้อม — endpoint นี้เป็นตัวย่อยจาก **กติกาเดียวกัน** (`StaffLeave::isServiceAvailable`)
 
-`StaffLeaveController::availability()`
+**ความหมายของ `available` — อ่านให้ถูก ไม่ใช่แค่ "มีคิวว่าง":**
+
+| สถานการณ์ | ผล |
+|---|---|
+| มี pool ของคนงาน แล้วลาครบ | `false` |
+| มี pool แต่ยังมีคนไม่ลา | `true` |
+| **ไม่มี pool เลย** | **`true` เสมอ** — ความพร้อมถูกควบคุมโดย `capacity` แทน |
+
+- pool ขึ้นกับ flag: `allow_staff_selection=true` → `service_staff` · `false` → `service_user`
+- **เช็คแค่วันลา ไม่เช็คโควตา** — บริการที่ยังมีโควตาว่างแต่หมอลาครบก็จะได้ `false`
+- วันลาที่นับถูกกรองด้วย `health_center_id` ด้วยเสมอ
+
+`StaffLeaveController::availability()` · `StaffLeave::isServiceAvailable()`
 
 ---
 
 ## B10. ค้นหาและแก้ข้อมูลผู้รับบริการ
 
-> **เงื่อนไขร่วมทุก endpoint ในหัวข้อนี้:** ผู้รับบริการต้อง**เคยมีประวัติคิวที่ศูนย์นั้น** — ผู้รับบริการที่ยังไม่เคยมาศูนย์จะไม่ปรากฏและแก้ไขไม่ได้ (tenant isolation ผ่าน queue history ไม่ใช่คอลัมน์บน patient)
+> **เงื่อนไขร่วมของการแก้ไข (B10.2 / B10.3):** ผู้รับบริการต้อง**เคยมีประวัติคิวที่ศูนย์นั้น** — ผู้รับบริการที่ยังไม่เคยมาศูนย์จะแก้ไม่ได้
+> (tenant isolation ผ่าน queue history ไม่ใช่คอลัมน์บน `patients`)
+> **แต่การค้นหา (B10.1) ผ่อนข้อยกเว้นนี้เมื่อค้นด้วย `cid`** — ดูรายละเอียดด้านล่าง
 
 ### B10.1 ค้นหาผู้รับบริการ
 
@@ -1129,17 +1453,24 @@ Staff.status = ACTIVE + มี StaffLeave วันนั้น  →  effective_
 
 | query | ผล |
 |---|---|
-| `q` | ค้นชื่อ/นามสกุล (max 100) |
-| `cid` | 13 หลัก |
-| `phone` | max 20 |
+| `q` | ค้นชื่อ/นามสกุล (max 100) — ค้นทั้ง `first_name` และ `last_name` |
+| `cid` | 13 หลัก — **ข้ามการกรองด้วยศูนย์** (ดูข้อความล่าง) |
+| `phone` | max 20 — ค้นแบบ contains ไม่ใช่ตรงทั้งหมด |
 | `gender` | `MALE/FEMALE/OTHER` |
-| `province` / `district` | max 100 |
+| `province` / `district` | max 100 — ค้นแบบ contains |
 | `health_center_id` | SUPER_ADMIN เท่านั้น; HC_ADMIN ถูกบังคับศูนย์ตัวเอง |
 | `per_page` | 1-100, default 15 |
-| `sort_by` | `created_at/first_name/last_name/id` |
-| `order` | `asc/desc` |
+| `sort_by` | `created_at`/`first_name`/`last_name`/`id` (default `created_at`) |
+| `order` | `asc`/`desc` (default `desc` — ใหม่สุดก่อน) |
 
-`StaffPatientIndexRequest::rules()` · `StaffPatientController::index()`
+> ⚠️ **ค้นด้วย `cid` = การยืนยันตัวตน ไม่ใช่การค้นในข้อมูลของศูนย์**
+> พิมพ์ `cid` แล้วจะ**ข้ามเงื่อนไข "ต้องเคยมาศูนย์นี้"** ไปเลย เห็นผู้รับบริการจากศูนย์อื่นด้วย
+> เหตุผล: ผู้รับบริการที่ลงทะเบียนเองที่ศูนย์อื่นต้องมาหาเจอที่หน้าเคาน์เตอร์ได้
+> ถ้ากรองด้วยศูนย์ตรงนี้ ระบบจะเข้าใจว่าไม่เคยลงทะเบียน แล้วลงทะเบียนซ้ำจนชนเบอร์
+>
+> การค้นที่**พบผู้รับบริการและค้นด้วย `cid`** → เขียน `AuditLog` action `LOOKUP_PATIENT_BY_CID` (ดู C.3)
+
+`StaffPatientIndexRequest::rules()` · `StaffPatientController::index()` · `StaffPatientService::index()`
 
 ### B10.2 แก้เบอร์โทร (STAFF ทำได้)
 
@@ -1181,9 +1512,22 @@ Staff.status = ACTIVE + มี StaffLeave วันนั้น  →  effective_
 ```json
 { "health_center_id": 1, "cid": "5100000000011", "first_name": "...", "birth_date": "1990-01-01" }
 ```
-- ทุก field optional; `cid` unique, `birth_date` ต้องเป็นวันที่ในอดีต
-- เขียน `AuditLog` (mask ทั้ง cid และเบอร์)
-- **STAFF ธรรมดา → 403** (ต้องใช้ B10.2 แทน)
+
+| field | rule |
+|---|---|
+| `health_center_id` | SUPER_ADMIN ต้องส่ง · HC_ADMIN ถูกบังคับเป็นศูนย์ตัวเอง |
+| `cid` | optional, 13 หลัก, unique |
+| `first_name` / `last_name` | optional, max 100 |
+| `birth_date` | optional, **ต้องเป็นวันที่ในอดีต** (`before:today`) |
+| `gender` | optional, `MALE/FEMALE/OTHER` |
+| `subdistrict` / `district` / `province` | optional, max 100 |
+| `full_address` | optional, ไม่จำกัดความยาว |
+
+- ทุก field optional · ไม่มี field เปลี่ยนจริง → `"ข้อมูลไม่มีการเปลี่ยนแปลง"` + **ไม่เขียน audit log**
+- เขียน `AuditLog` action `UPDATE_PATIENT_PROFILE` (mask ทั้ง cid และเบอร์)
+- **ไม่แตะ `phone_number`** — ต้องใช้ B10.2 (ซึ่งมีกติกาขอบเขตบริการเข้มกว่า)
+- **STAFF ธรรมดา → 403** (route อยู่ใน group ผู้ดูแลขึ้นไป) ต้องใช้ B10.2 แทน
+- response คืนข้อมูลจริงทั้งหมด **ไม่ mask** เพราะเป็นการแก้ไขข้อมูลของผู้รับบริการโดยตรง
 
 `UpdatePatientProfileRequest::rules()` · `StaffPatientController::updateProfile()`
 
@@ -1226,11 +1570,25 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 ```json
 { "health_center_id": 1 }
 ```
-- **`health_center_id` ต้องตรงกับ `{id}` ใน path** ไม่ตรง → **404**
-- ใช้ `lockForUpdate` + เขียน `AuditLog`
-- `ACTIVE ↔ CLOSING`, `INACTIVE → ACTIVE` (เปิดคืนได้)
+- **`health_center_id` ต้องตรงกับ `{id}` ใน path** ไม่ตรง → **404** ตรวจก่อนแตะข้อมูล
+- ใช้ `lockForUpdate` + เขียน `AuditLog` (payload มี `from`/`to`)
 
-`StaffHealthCenterController.php`
+**แผนที่สถานะ:**
+
+| สถานะปัจจุบัน | ผลลัพธ์ |
+|---|---|
+| `ACTIVE` + ยังมีคิวค้าง | → `CLOSING` |
+| `ACTIVE` + **ไม่มีคิวค้างเลย** | → `INACTIVE` ทันที (ข้ามขั้น CLOSING) |
+| `CLOSING` | → `ACTIVE` (เปิดใหม่ได้) |
+| `INACTIVE` | → `ACTIVE` (เปิดคืนได้) |
+
+> ⚠️ **สถานะ INACTIVE เกิดได้ทันทีจากการสลับครั้งเดียว** ถ้าตอนกดปิดไม่มีคิวค้างเลย
+> ไม่ได้ต้องรอให้คิวหมดเสมอไป — จึงไม่มีสถานะระหว่างที่ต้องรอ
+>
+> เกณฑ์ "คิวค้าง" คือ `status = CONFIRMED` และ `appointment_date >= วันนี้` ตัวเดียวกับ C.2
+> และเป็นเกณฑ์เดียวกับที่ `CloseHealthCenterJob` ใช้ จึงไม่มีกติกาสองชุดขัดกันในสถานการณ์เดียวกัน
+
+`StaffHealthCenterController::toggleStatus()` · `StaffHealthCenterService::toggleStatus()`
 
 ### B11.4 แก้ข้อมูลศูนย์
 
@@ -1242,15 +1600,19 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 
 | field | rule |
 |---|---|
-| `code` | unique (max 20) — **HC_ADMIN ส่งมา → 403** `"ไม่มีสิทธิ์แก้ไขโค้ดสถานพยาบาล"`; SUPER_ADMIN แก้ได้ |
-| `status` | **ถูกบังคับถอดออกเสมอ** — ต้องใช้ B11.3 แทน |
+| `code` | unique (max 20) — **HC_ADMIN ส่งมา → 403** `"ไม่มีสิทธิ์แก้ไขรหัสศูนย์สุขภาพ"`; SUPER_ADMIN แก้ได้ |
+| `name` / `phone_number` / `subdistrict` / `district` / `province` / `full_address` | optional, ทุก field nullable |
+| `status` | **ถูกบังคับถอดออกเสมอ** — ต้องใช้ B11.3 แทน (แม้จะผ่าน validation มาก่อนก็ถูกตัดทิ้ง) |
 | `discord_webhook_url` | **ถูกถอดออกเสมอ** — ต้องใช้ B11.5 แทน |
 | `latitude` / `longitude` | numeric, -90..90 / -180..180 |
 
-- HC_ADMIN ส่ง `{id}` ของศูนย์อื่น → **404**
-- ไม่มี field เปลี่ยน → ข้อความ `"ข้อมูลไม่มีการเปลี่ยนแปลง"` + **ไม่เขียน audit log**
+- HC_ADMIN ส่ง `{id}` ของศูนย์อื่น → **404** (ตรวจก่อนแตะข้อมูล)
+- **`code` ซ้ำ → 422** ผ่าน 2 ชั้น: `Rule::unique` ใน validation และจับ `QueryException` ใน service เผื่อชนกันพร้อมกัน
+- **ค่าที่ส่งมาเป็น `null` จะถูกกรองทิ้ง** — ไม่สามารถล้างค่าของศูนย์ด้วยการส่ง `null`
+- ไม่มี field เปลี่ยนจริง → ข้อความ `"ข้อมูลไม่มีการเปลี่ยนแปลง"` + **ไม่เขียน audit log**
+- response คืน 10 field ของศูนย์ (ไม่ใช่ `has_webhook` แบบของ B11.1)
 
-`UpdateHealthCenterRequest.php` · `StaffHealthCenterController.php`
+`UpdateHealthCenterRequest::rules()` · `StaffHealthCenterController::update()` · `StaffHealthCenterService::updateProfile()`
 
 ### B11.5 ตั้ง Discord Webhook (SUPER_ADMIN)
 
@@ -1259,11 +1621,13 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 { "health_center_id": 1, "webhook_url": "https://discord.com/api/webhooks/123456/abcXYZ" }
 ```
 - `webhook_url` ต้อง match regex `^https://discord\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$`, max 500
-- ส่ง `null` = **ลบ webhook** (ปิดการแจ้งเตือนของศูนย์นั้น)
-- `health_center_id` ไม่ส่ง → 422, ไม่มีจริง → 404
+  ปฏิเสธทุกโดเมนอื่นรวมถึง `discordapp.com` และ `ptb./canary.`
+- **ส่ง `null` = ลบ webhook** (ปิดการแจ้งเตือนของศูนย์นั้น) — ข้อความตอบกลับต่างกันตามเคส
+- `health_center_id` ไม่ส่ง → 422 (ผู้ดูแลระบบต้องระบุศูนย์ เพราะ webhook เป็นของศูนย์), ไม่มีจริง → 404
+- **audit log เก็บแค่ `set: true/false` ไม่เก็บ URL** เพราะ webhook คือค่าลับ — ตรวจย้อนหลังได้ว่าเคยตั้งหรือลบ แต่ย้อนค่าเดิมไม่ได้
 - ถ้าลบ/ตั้งแล้ว `GET /v1/staff/health-centers` จะสะท้อนค่าใหม่ใน `has_webhook`
 
-`UpdateDiscordWebhookRequest.php` · `StaffDiscordController::updateWebhook()`
+`UpdateDiscordWebhookRequest::rules()` · `StaffDiscordController::updateWebhook()`
 
 ---
 
@@ -1278,14 +1642,18 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 
 | query | ผล |
 |---|---|
-| `search` | ค้นชื่อ / username |
+| `search` | ค้นชื่อ / username (max 100) |
 | `health_center_id` | SUPER_ADMIN เท่านั้น; HC_ADMIN ถูกบังคับศูนย์ตัวเอง |
 | `status` | `ACTIVE/INACTIVE` |
 | `role_ids` | กรองตาม role (array) |
 | `sort_by` | `id/name/username/status/created_at` |
-| `per_page` | default 20 |
+| `order` | `asc/desc` (default `asc`) |
+| `per_page` | 1-100, default 20 |
 
-`StaffUserManagementController.php`
+> `search` ครอบคลุมทั้ง `name` และ `username` ในเงื่อนไขเดียวกัน
+> ถ้าใส่เงื่อนไขศูนย์ไว้ข้างใน ต้องจับกลุ่มไว้ ไม่งั้น OR จะหลุดเงื่อนไขศูนย์ออกไป
+
+`StaffUserManagementController::index()` · `AdminUserIndexRequest::rules()`
 
 ### B12.2 ดูรายชื่อบทบาทที่ตัวเองมีสิทธิ์มอบ
 
@@ -1295,37 +1663,55 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 
 ### B12.3 สร้างผู้ใช้
 
-**`POST /v1/staff/admin/users`**
+**`POST /v1/staff/admin/users`** — สร้างบัญชี + โปรไฟล์บุคลากรในคำขอเดียว
 ```json
 { "name": "...", "username": "...", "password": "อย่างน้อย 8 ตัว",
-  "role_ids": [3], "health_center_id": 1, "status": "ACTIVE" }
+  "role_ids": [3], "health_center_id": 1, "status": "ACTIVE",
+  "category_id": 1, "position": "หมอนวด" }
 ```
 
 | field | rule |
 |---|---|
+| `name` | required, max 255 — ใช้เป็นชื่อทั้งบัญชีและโปรไฟล์ |
 | `username` | required, max 50, unique |
 | `password` | required, **min 8** |
-| `email` | optional, unique |
-| `role_ids` | required array — **HC_ADMIN ส่ง role อื่น → 422** และ `health_center_id` ถูกบังคับเป็นศูนย์ตัวเอง |
-| `health_center_id` | optional; SUPER_ADMIN ส่ง `null` ได้ (ผู้ใช้ไม่ผูกศูนย์) |
+| `email` / `phone_number` | optional (max 255 / 20), `email` unique |
+| `role_ids` | required array ≥ 1 — **HC_ADMIN ส่ง role อื่น → 422** และ `health_center_id` ถูกบังคับเป็นศูนย์ตัวเอง |
+| `health_center_id` | optional ใน Request แต่**ทุกคนต้องมีศูนย์** — ไม่ส่งและไม่มีศูนย์ตัวเอง → 422 `"กรุณาระบุศูนย์สุขภาพที่สังกัดของบัญชีนี้"` (ดู 0.3) |
+| `status` | optional, `ACTIVE/INACTIVE` (default `ACTIVE`) — สถานะของ**บัญชี** |
+| `category_id` / `position` | optional — ของ**โปรไฟล์บุคลากร** (ดู 0.3b) |
 
-เขียน `AuditLog` action `USER_CREATED`
-`StoreUserRequest.php` · `StaffUserManagementController.php`
+**โปรไฟล์บุคลากรที่ถูกสร้างพร้อมกัน:**
+- `name` = ชื่อเดียวกับบัญชี · `user_id` ผูกเข้าหาใหม่ · `health_center_id` = ของบัญชี
+- **`status = ACTIVE` เสมอ ไม่ยกมาจาก `status` ของบัญชี** — การหยุดให้บริการเกิดจากวันลา ไม่ใช่จากสถานะบัญชี
+  ตั้งบัญชีเป็น `INACTIVE` จึงไม่ทำให้หมอหายจากหน้าจอผู้รับบริการ
+- ทั้งสองอย่างอยู่ใน transaction เดียว — ถ้าตัวไหนพังจะไม่เหลือบัญชีค้าง
+
+**ผลลัพธ์** → **201** พร้อม `AdminUserResource` · เขียน `AuditLog` action `USER_CREATED` (มี `staff_id` ใน payload)
+
+`StoreUserRequest::rules()` · `StaffUserManagementController::store()`
 
 ### B12.4 แก้ผู้ใช้
 
-**`PATCH /v1/staff/admin/users/{id}`**
+**`PATCH /v1/staff/admin/users/{id}`** — ส่งเฉพาะ field ที่ต้องการแก้
 
 | กรณี HC_ADMIN | ผล |
 |---|---|
-| แก้บัญชี SUPER_ADMIN | 403 `"ไม่สามารถแก้ไขบัญชีผู้ดูแลระบบได้"` |
+| แก้บัญชี SUPER_ADMIN | 403 `"ไม่สามารถแก้ไขบัญชี Super Admin ได้"` |
 | แก้ผู้ใช้ศูนย์อื่น | 404 |
-| ส่ง `health_center_id` เพื่อย้ายศูนย์ | **ถูกเมินเสมอ** (`unset`) |
+| ส่ง `health_center_id` เพื่อย้ายศูนย์ | **ถูกเมินเสมอ** (`unset`) — SUPER_ADMIN ที่ย้ายศูนย์ได้ |
 | ส่ง `role_ids` ที่มี role อื่นนอกจาก STAFF | 422 |
 | ถอด role หรือปิดบัญชีของ**ผู้ดูแลศูนย์คนใด** | 403 `"การเปลี่ยนสิทธิ์ผู้ดูแลศูนย์ต้องให้ผู้ดูแลระบบเป็นผู้ดำเนินการ"` |
 
 > **HC_ADMIN ถอดสิทธิ์ผู้ดูแลศูนย์ไม่ได้** แม้แต่ตัวเอง ถ้าได้ศูนย์จะไม่เหลือคนทำหน้าเคาน์เตอร์
 > เฉพาะการแก้ชื่อหรือเบอร์โทรศัพท์เท่านั้นที่ HC_ADMIN ทำเองได้
+>
+> ⚠️ **"ไม่ส่ง `role_ids`" ≠ "ถอดบทบาท"** — ถ้าตีความผิด ผู้ดูแลศูนย์จะแก้ชื่อหรือเบอร์ของตัวเองไม่ได้เลย
+
+**สิ่งที่แก้ไม่ได้จากที่นี่:**
+- **ชื่อในโปรไฟล์บุคลากรไม่ซิงก์กับบัญชี** — แก้ `name` ที่นี่เปลี่ยนเฉพาะฝั่ง `users`
+  ถ้าต้องเปลี่ยนชื่อที่ผู้รับบริการเห็น ต้องแก้ที่ roster (B8.2)
+- `category_id` / `position` ของโปรไฟล์ · `username` ซ้ำ → 422 · ย้าศูนย์ (HC_ADMIN) · เปลี่ยนสิทธิ์ผู้ดูแลศูนย์
 
 **การป้องกัน "คนสุดท้าย" — ใช้เกณฑ์เดียวกันทั้งสองระดับ:**
 
@@ -1442,16 +1828,21 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 
 ## C.3 สิทธิ์ PDPA
 
-**ข้อมูลถูก mask เสมอใน response** ยกเว้นเรียก unmask:
-- `masked_full_name` = 2 ตัวแรก + `*** ` + 2 ตัวแรกนามสกุล + `***`
-- `masked_phone` = 3 ตัวแรก + `-***-` + 4 ตัวท้าย
-- `masked_cid` = 1 ตัวแรก + `-****-*****-` + 2 ตัวท้าย
+**ข้อมูลถูก mask เสมอใน response** ยกเว้นเรียก unmask
+
+| accessor | รูปแบบ |
+|---|---|
+| `masked_full_name` | 2 ตัวแรก + `*** ` + 2 ตัวแรกนามสกุล + `***` |
+| `masked_phone` | 3 ตัวแรก + `-***-` + 4 ตัวท้าย |
+| `masked_cid` | 1 ตัวแรก + `-****-*****-` + 2 ตัวท้าย |
 
 เป็น accessor ระดับ model จึงใช้กับทุกทางโดยอัตโนมัติ — รวมถึง `appointments` ใน `/dashboard/bundle`
+แต่ **ไม่ใช่ทุก response จะ mask** — `updateContact` และ `updateProfile` คืนค่าจริงโดยตรง
+เพราะเป็นการแก้ไขข้อมูลของผู้รับบริการรายนั้นโดยตรง
 
-> ⚠️ **ชื่อ field ใน response ของรายการคิวคือ `masked_name` / `masked_phone`** (ไม่ใช่ `masked_full_name`)
-> ส่วน accessor ชื่อ `masked_full_name` — ชื่อใน JSON ถูกตั้งใน resource
-> ดู `AppointmentResource::patient()`
+> ⚠️ **ชื่อ field ใน JSON ไม่ตรงกับชื่อ accessor**
+> accessor ชื่อ `masked_full_name` แต่ `AppointmentResource::patient()` ตั้งชื่อใน JSON เป็น `masked_name`
+> เจ้าหน้าที่หน้าค่าน์ต้องอ่าน `masked_name` — อย่าไปหา `masked_full_name` ใน response
 
 **หน้าที่ที่เขียน `AuditLog` (PDPA):**
 
@@ -1470,6 +1861,9 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 
 > ชื่อ action ทั้งหมด grep ได้จาก `'action' => '...'` ทั่ว `app/`
 > ตรวจจากตรงนั้นก่อนใช้ query audit เสมอ ชื่อไม่ได้ถูกรวบรวมไว้ที่จุดเดียว
+>
+> **หน้าที่ที่ไม่เขียน audit log** (ไม่ใช่ข้อมูลส่วนบุคคลของผู้รับบริการ):
+> เปลี่ยนสถานะคิว · สลับเวรหมอ · ลง/ยกเลิกวันลา · สร้าง-แก้-ลบบริการ · ตั้งวันให้บริการ · มอบหมายผู้รับผิดชอบ
 
 > หมายเหตุ: `USER_*` และ `UPDATE_HEALTH_CENTER*` **ไม่ mask** เพราะไม่ใช่ข้อมูลส่วนบุคคลของผู้รับบริการ
 > `audit_logs` มีเพียงคอลัมน์ `payload` (json) — ไม่มีคอลัมน์ `masked_data` แยก
@@ -1478,9 +1872,10 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 ## C.4 Discord notification
 
 - ถูก dispatch **หลัง commit** (นอก transaction) — ไม่ rollback การจองเมื่อส่ง Discord ไม่สำเร็จ
-- queue = `discord`, retry 3 ครั้ง (backoff 30 / 120 / 600 วินาที)
+- queue = `discord`, retry 3 ครั้ง (backoff 30 / 120 / 600 วินาที) · timeout ต่อครั้ง 30 วินาที
 - ศูนย์ไม่มี webhook → `Log::warning` แล้วจบ ไม่ error (ไม่กระทบการจอง)
 - ข้อความใน embed ใช้ชื่อผู้รับบริการแบบ **masked**
+- retry ครบแล้วยังไม่สำเร็จ → `failed()` บันทึก log แล้วจบ ไม่ throw ต่อ
 - **ต้องมี `queue_worker` รันอยู่** ถึงจะส่งจริง — ถ้า worker ไม่ทำงาน job จะสะสมใน Redis
 `BookingService.php` · `SendDiscordNotificationJob.php`
 
@@ -1494,10 +1889,11 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 | **`service_user` อาจยังว่างทั้งหมด** | ตรวจจากฐานข้อมูลที่ใช้งานจริง — ถ้ายังไม่มีการ assign บริการให้ STAFF เจ้าหน้าที่จะเห็นคิวว่างและแตะคิวไหนก็ได้ 403 (ดู 0.3a) ต้องผูกบริการก่อนใช้งานจริง บริการที่ไม่ผูกชื่อบุคลากรจะถูกคุมความพร้อมด้วย capacity ล้วน |
 | **มี scheduler แล้ว แต่ auto-close ยังทำงานต่อเมื่อมี action ต่อคิวเท่านั้น** | ปิดคิวของวันที่ผ่านมารันทุกวัน 00:05 แต่การปิดศูนย์เมื่อคิวหมดยังรอ action จากเจ้าหน้าที่ (ดู 0.5) |
 | **ตัวตรวจวันให้บริการรับวันที่ที่ส่งเข้ามา** | ใช้วันในพารามิเตอร์ ไม่ใช่วันของเครื่อง จึงข้ามเที่ยงคืนได้โดยไม่ตรวจผิดวัน |
-| **สิทธิ์เจ้าหน้าที่มาจากฐานข้อมูลอย่างเดียว** | token ไม่ได้ใช้ตัดสิทธิ์ ถ้าไม่มีบทบาทในฐานข้อมูลจะเข้าฝั่งเจ้าหน้าที่ไม่ได้ |
+| **สิทธิ์เจ้าหน้าที่มาจากฐานข้อมูลอย่างเดียว** | token ไม่ได้ใช้ตัดสิทธิ์ ถ้าไม่มีบทบาทในฐานข้อมูลจะเข้าฝั่งเจ้าหน้าที่ไม่ได้ — รวมถึงโควตา rate limit ด้วย (ดู B2.3) |
+| **`roles` คืนเฉพาะ role แรก** | response ของ `login` ใช้ `roles->first()` ถ้าบัญชีมีหลาย role จะเห็นแค่ตัวเดียว — ต้องดู `GET /v1/staff/me` เมื่อต้องการทั้งหมด |
 | **ตารางเชื่อมบริการ↔ช่วงเวลามีคอลัมน์ศูนย์ที่ต้องเขียนค่าเองทุกจุดเขียน** | ค่าผิดจะถูกฐานข้อมูลปฏิเสธ แต่ถ้าเพิ่มจุดเขียนใหม่ต้องส่งศูนย์มาด้วย ไม่งั้นจะ NOT NULL |
-| **`RoleSeeder` รันซ้ำได้ปลอดภัย แต่ seeder อื่นยัง truncate** | `RoleSeeder` ไม่ truncate แล้ว (อ้างอิงด้วย `name`) · `HealthCenterSeeder` / `ServiceSeeder` / `StaffSeeder` / `UserSeeder` ยัง truncate ตาราง — **ห้ามรันบนฐานข้อมูลที่มีข้อมูลจริง** |
-| **ดัชนีฐานข้อมูลที่เกี่ยวกับคิวมีอยู่แล้ว** | `idx_appointments_capacity_lookup (health_center_id, service_id, appointment_date, time_slot_id, status)` ครอบการนับโควตาและ `lockForUpdate` · `idx_appointments_staff_lookup (staff_id, appointment_date, status)` ครอบการนับคิวรายหมอ · `idx_appointments_status_date` ครอบ scheduler — **อย่าเพิ่มดัชนีซ้ำซ้อนกับหัวคอลัมน์เหล่านี้** เพราะจะทำให้ช้าลง |
+| **`RoleSeeder` รันซ้ำได้ปลอดภัย แต่ seeder อื่นยัง truncate** | `RoleSeeder` ไม่ truncate แล้ว (อ้างอิงด้วย `name`) · seeder อื่นยัง truncate ตารางทั้งหมด: `CategorySeeder` · `HealthCenterSeeder` · `RightTypeSeeder` · `ServiceSeeder` (รวม `service_capacity` และ `service_time_slot`) · `StaffSeeder` · `TimeSlotSeeder` · `UserSeeder` (รวม `user_roles`) — **ห้ามรันบนฐานข้อมูลที่มีข้อมูลจริง** |
+| **ดัชนีฐานข้อมูลที่เกี่ยวกับคิวมีอยู่แล้ว** | `idx_appointments_capacity_lookup (health_center_id, service_id, appointment_date, time_slot_id, status)` ครอบการนับโควตาและ `lockForUpdate` · `idx_appointments_staff_lookup (staff_id, appointment_date, status)` ครอบการนับคิวรายหมอ · `idx_appointments_duplicate_check (patient_id, service_id, appointment_date, status)` ครอบกันจองซ้ำ · `idx_appointments_status_date (status, appointment_date)` ครอบ scheduler · `uq_appointments_daily_queue` กันเลขคิวซ้ำ — **อย่าเพิ่มดัชนีซ้ำซ้อนกับหัวคอลัมน์เหล่านี้** เพราะจะทำให้ช้าลง |
 | **ไม่มี ETag / 304** | ระบบไม่มี cache ระดับ HTTP — ทุกคำขอได้ payload เต็ม ถ้าจะเพิ่มต้องระวังเรื่องข้อมูลข้ามผู้ใช้ เพราะคิวมีข้อมูลผู้รับบริการ |
 | **ตัวเลขนับผู้รับบริการในหน้าจอต้องตรงกับรายการที่เห็น** | ถ้าเรียก `/dashboard/summary` แยกจาก `/appointments` แล้ววันที่ของทั้งสองไม่ตรงกัน ตัวเลขจะไม่ตรง — ใช้ `/dashboard/bundle` แก้ (ดู B2.2) |
 
@@ -1509,13 +1905,17 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 
 | ค่า | ของ | หมายเหตุ |
 |---|---|---|
-| `ACTIVE` / `CLOSING` / `INACTIVE` | `health_centers.status` | ดู 0.5 |
-| `ACTIVE` / `INACTIVE` | `users.status` | soft delete = INACTIVE |
-| `ACTIVE` / `LEAVE` / `INACTIVE` | `staff.status` | `INACTIVE` สลับ duty ไม่ได้ |
-| `CONFIRMED` / `COMPLETED` / `CANCELLED` / `NO_SHOW` | `appointments.status` | เปลี่ยนได้เฉพาะจาก CONFIRMED |
+| `ACTIVE` / `CLOSING` / `INACTIVE` | `health_centers.status` | ดู 0.5 · `INACTIVE` เกิดจากระบบเท่านั้น |
+| `ACTIVE` / `INACTIVE` | `users.status` | ลบบัญชี = soft delete (`deleted_at`) + ตั้ง `INACTIVE` |
+| `ACTIVE` / `LEAVE` / `INACTIVE` | `staff.status` | `INACTIVE` สลับ duty ไม่ได้ (ดู B8.3) |
+| `CONFIRMED` / `COMPLETED` / `CANCELLED` / `NO_SHOW` | `appointments.status` | แผนที่การเปลี่ยนสถานะดู B7.2 |
 | `PER_MASSEUSE` / `PER_SLOT` / `PER_DAY` | `services.capacity_type` | ดู 0.4 |
 | `SELF` / `STAFF` | `appointments.booked_by_type` | จองเอง / walk-in |
 | `MALE` / `FEMALE` / `OTHER` | `patients.gender` | |
+| `ACTIVE` / `INACTIVE` | `categories.status` · `right_types.status` | ไม่มี API แก้ (ดู C.5) |
+
+> ตารางอ้างอิงที่ไม่มี enum แต่ต้องรู้: `roles.name` = `STAFF` / `HEALTH_CENTER_ADMIN` / `SUPER_ADMIN`
+> ชื่อ role ถูก**อ้างอิงเป็นข้อความ** ไม่ใช่ id — ถ้าเปลี่ยนชื่อในฐานข้อมูล ระบบทั้งหมดจะพัง
 
 ### ตาราง pivot ที่ต้องรู้
 
@@ -1525,7 +1925,12 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 | `service_user` | service ↔ user (role STAFF) | **ทางที่ 1 ของขอบเขตบริการ** — จำกัดว่า STAFF เห็น/แตะคิวของบริการไหนได้ |
 | `service_time_slot` | service ↔ time_slot + `days_mask` + `health_center_id` | **วัน/เวลาที่เปิดให้บริการ** — คอลัมน์ศูนย์ต้องตรงกับทั้งบริการและช่วงเวลา (composite FK) |
 | `user_roles` | user ↔ role | ตรวจสิทธิ์ทุก request |
-| `patient_rights` | patient ↔ right_type | สิทธิการรักษา (มี `is_primary` — บังคับให้มีได้เพียงหนึ่งรายการต่อคน) |
+| `patient_rights` | patient ↔ right_type | สิทธิการรักษา (มี `is_primary` — บังคับให้มีได้เพียงหนึ่งรายการต่อคน บังคับที่ระดับฐานข้อมูล) |
+| `staff_leaves` | staff_user_id + leave_date | วันลา — **ผูกกับ user ไม่ใช่ staff profile** (ดู B9) |
+
+> ⚠️ **ตาราง `service_time_slot_days` ถูกลบทิ้งแล้ว** — เคยเป็นตารางแยกต่อ (slot, day)
+> ปัจจุบันรวมเป็น bitmask ใน `service_time_slot.days_mask` แทน
+> ชื่อ `Service::timeSlotDays()` ที่ยังใช้อยู่เป็น **alias** ของ `timeSlots()` ไม่ใช่คนละตาราง
 
 ### ไฟล์ที่ต้องเปิดดูเมื่อ debug
 
@@ -1538,8 +1943,11 @@ shape 12 field เดียวกับ dropdown ของ SUPER_ADMIN แต่
 | ได้ 403 ทั้งที่ควรได้ | `ResolvesHealthCenterScope.php` (`denyIfOutOfServiceScope` / `denyIfOutOfPatientScope`) + ตรวจ `service_user` และ `appointments.staff_id` ในฐานข้อมูล |
 | เห็นคิวว่างแต่ควรมี | ตรวจว่าบัญชีนั้นถูก assign บริการแล้วหรือยัง (`service_user`) |
 | โดน 429 | `AppServiceProvider::rateLimitFor()` + ดู B2.3 |
-| auto-close ไม่ทำงาน | `CloseHealthCenterJob.php` + สถานะ `queue_worker` |
+| auto-close ไม่ทำงาน | `CloseHealthCenterJob.php` + สถานะ `queue_worker` — ต้องมี action ต่อคิวก่อน (ดู C.5) |
+| Discord ไม่ส่ง | `SendDiscordNotificationJob.php` + `queue_worker` + ค่า `discord_webhook_url` ของศูนย์ |
 | validation message ไม่ตรงที่คาด | `app/Http/Requests/Api/**` (messages อยู่ในไฟล์เดียวกัน) |
+| ตอบ 404 ทั้งที่ควรเจอ | ตรวจ `deleted_at` (soft delete) และ `is_active` ของศูนย์/บริการ/ช่วงเวลาที่เกี่ยว |
+| ตอบ 422 ที่คาดว่า 403 | ตรวจว่ามี FormRequest ที่ validate เงื่อนไขเดียวกันอยู่ก่อนถึงชั้น controller หรือไม่ |
 
 ### วิธีตรวจว่าเอกสารนี้ยังตรงกับโค้ด
 
