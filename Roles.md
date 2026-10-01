@@ -141,11 +141,38 @@
 
 **Throttle staff login:** middleware `ThrottleStaffLogin` ลิมิต 5 ครั้ง/30 นาที โดยนับทุกความพยายามก่อนถึง controller ไม่ว่าจะผิดหรือถูก และล้างตัวนับเมื่อเข้าระบบสำเร็จ — ✅ แก้แล้ว (เดิมนับเฉพาะ 401/403 ทำให้การเดา password ไม่โดนจำกัด) · ขอบเขตอยู่ที่ username + IP
 
+**โควตาต่อนาทีของทั้งระบบ (middleware group `api` ครอบทุก endpoint):**
+
+| ผู้เรียก | ต่อนาที | เหตุผล |
+|---|---|---|
+| เจ้าหน้าที่ปฏิบัติงาน · ผู้ดูแลศูนย์ · ผู้ดูแลระบบ | **240** | ใช้หน้าจอเดียวกัน หนึ่งจอโหลดหลายคำขอพร้อมกัน |
+| ผู้รับบริการ · ยังไม่ยืนยันตัวตน | **60** | เรียกทีละคำขอในการจองหรือดูสถานะ |
+
+- **นับแยกตามบัญชี ไม่ใช่ตาม IP** — อ่านโทเคนจาก header โดยตรง (ตัว limiter ทำงานก่อน auth) และแยกชนิดบัญชีด้วย morph class เพราะเจ้าหน้าที่กับผู้รับบริการเก็บคนละตาราง เลขบัญชีจึงซ้ำกันได้
+- เก็บตัวนับใน **Redis** (`CACHE_STORE=redis`) จึงนับรวมทุก instance
+- เป็น **fixed window** — ขอบเขตแรงสุดคือโควตาเต็มในช่วงเวลาใดช่วงหนึ่ง แล้วเป็นศูนย์ทันทีเมื่อข้ามเส้น
+- ลิมิตเฉพาะทางที่เข้มกว่านี้ยังทำงาน เพราะอยู่หลังโควตารวม: `unmask` 10/min · `patient-login` 10/min · `patient-register` 5/min · staff login 5 ครั้ง/30 นาที
+- หมายเหตุ: โควตารวมเดิม 60/min ทำให้ `unmask` 10/min แทบไม่มีโอกาสทำงาน เพราะเพดาน 60 มาถึงก่อนเสมอ
+
 ### 3.2 Dashboard
 
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
 | `GET` | `/v1/staff/dashboard/summary` | STAFF, HC_ADMIN, SUPER_ADMIN | สถิติวัน (default วันนี้, รับ `?date=`) — SUPER_ADMIN ไม่ระบุ `health_center_id` = รวมทุกศูนย์ |
+| `GET` | `/v1/staff/dashboard/bundle` | STAFF, HC_ADMIN, SUPER_ADMIN | **หน้าจอหนึ่งจอ** — รวม `summary` + `appointments` + `roster` ในคำขอเดียว; รับ `?date=` เหมือนกันทุกชิ้น |
+
+**`/dashboard/bundle` — ขอบเขตของแต่ละชิ้นไม่เปลี่ยน การรวมไม่ใช่การเปิดสิทธิ์:**
+
+| ชิ้น | STAFF เห็น | ผู้ดูแลเห็น |
+|---|---|---|
+| `summary` | นับเฉพาะบริการที่ถูกมอบหมาย (ตรงกับ `appointments` เสมอ) | ทั้งศูนย์ |
+| `appointments` | เฉพาะบริการที่ถูกมอบหมาย | ทั้งศูนย์ |
+| `roster` | **ทั้งศูนย์** (ต้องเห็นว่าใครเข้าเวร/ลาวันนี้) | ทั้งศูนย์ |
+
+- ข้อมูลผู้รับบริการใน bundle ยังถูกปิดบังเหมือนเดิม (`masked_name`, `masked_phone`) — ไม่มี `cid` หรือที่อยู่
+- ทั้งสามชิ้นใช้ `date` เดียวกันเสมอ จึงไม่เห็นข้อมูลคนละวัน
+- endpoint เดิมทั้งสามยังทำงานเหมือนเดิม — ย้ายมาใช้ bundle ทีละหน้าได้
+- รายชื่อบุคลากรคืนค่า `effective_status` เมื่อส่ง `date` (คำนวณรวมวันลา) · ไม่ส่ง `date` จะไม่มีฟิลด์นี้
 
 ### 3.3 การจัดการบริการ (Services)
 
@@ -450,6 +477,7 @@
 | PATCH | `/v1/staff/me` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | POST | `/v1/staff/logout` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | GET | `/v1/staff/dashboard/summary` | STAFF,HC_ADMIN,SUPER_ADMIN |
+| GET | `/v1/staff/dashboard/bundle` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | GET | `/v1/staff/services` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | POST | `/v1/staff/services` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | PUT | `/v1/staff/services/{id}` | STAFF,HC_ADMIN,SUPER_ADMIN |

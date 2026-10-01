@@ -1851,6 +1851,61 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/staff/dashboard/bundle:
+    get:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Staff All] หน้าจอหนึ่งจอ — สรุป + คิว + รายชื่อบุคลากร"
+      description: |
+        รวม `summary` + `appointments` + `roster` ในคำขอเดียว เพื่อลดจำนวนคำขอของหน้าจอ
+        และให้ทุกชิ้นใช้ `date` เดียวกันเสมอ
+
+        **การรวมไม่ได้เปิดสิทธิ์ให้กว้างขึ้น — ขอบเขตของแต่ละชิ้นเหมือนเดิม:**
+        - `summary` / `appointments` — STAFF เฉพาะบริการที่ถูกมอบหมาย · ผู้ดูแลทั้งศูนย์
+        - `roster` — ทั้งศูนย์ทั้งสองฝั่ง เพราะต้องเห็นว่าใครเข้าเวร/ลาวันนี้
+        - `summary.total` เท่ากับจำนวนใน `appointments` เสมอ
+        - ข้อมูลผู้รับบริการยังถูกปิดบัง — ไม่มี `cid` หรือที่อยู่
+        - `roster` คืน `effective_status` (รวมวันลา) เมื่อส่ง `date`
+        - endpoint เดิมทั้งสามยังทำงานเหมือนเดิม
+      operationId: staffDashboardBundle
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+            example: "2026-08-21"
+          description: วันที่ต้องการดู ใช้กับทั้งสามชิ้น (ถ้าไม่ระบุ = วันนี้)
+        - $ref: "#/components/parameters/HealthCenterIdFilter"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      date:
+                        type: string
+                        format: date
+                      summary:
+                        $ref: "#/components/schemas/DashboardSummary"
+                      appointments:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Appointment"
+                      roster:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/StaffMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /v1/staff/appointments:
     get:
       tags: ["6. Appointment & Queue"]
