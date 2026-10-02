@@ -682,6 +682,7 @@ paths:
         - STAFF: เห็นเฉพาะคิวของบริการที่ตัวเองถูกมอบหมาย (assignees) — ส่ง service_id นอกเหนือ → 403
         - HC_ADMIN/SUPER_ADMIN: เห็นทุกคิวของศูนย์ (SA ระบุ ?health_center_id)
         - กรองด้วย date / service_id / status
+        - **`date` ไม่จำกัดวัน** — ส่งวันอนาคตเพื่อดูคิวที่หมอจองไว้ล่วงหน้าให้ผู้รับบริการได้
       operationId: staffListAppointments
       parameters:
         - name: date
@@ -689,7 +690,7 @@ paths:
           schema:
             type: string
             format: date
-          description: วันที่ (default = วันนี้)
+          description: วันที่ (default = วันนี้ · ไม่จำกัดวัน)
         - name: service_id
           in: query
           schema:
@@ -832,6 +833,67 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/staff/appointments/{id}/reschedule:
+    parameters:
+      - $ref: "#/components/parameters/AppointmentId"
+
+    patch:
+      tags: [Staff (ทุกบทบาท)]
+      summary: เลื่อนคิวไปวันอื่น
+      description: |
+        ใช้เมื่อหมอติดงานด่วนจนให้บริการไม่ได้ จึงโทรคุยกับผู้รับบริการแล้วย้ายวันมา
+        **แก้คิวเดิม** — ไม่สร้างคิวใหม่ ไม่ยกเลิกคิวเดิม จึงใช้ได้ทั้งคิวที่หมอจองให้ไว้ล่วงหน้า
+        (ดู `POST /walk-in` ที่รับ `appointment_date`) และคิวที่ผู้รับบริการจองเองผ่านระบบ
+
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status, reassign-staff และ unmask):**
+        STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403**
+        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`) — คนที่ให้บริการจริง
+
+        ข้อกำหนด (422 ถ้าไม่ผ่าน):
+        - คิวต้องยังเป็นสถานะ CONFIRMED (เสร็จ/ยกเลิก/ไม่มาแล้วเลื่อนไม่ได้)
+        - `appointment_date` ต้องไม่ย้อนหลังกว่าวันนี้
+        - ช่วงเวลาใหม่ต้องเปิดให้บริการในวันนั้น และต้องเป็นของศูนย์เดิม
+        - ไม่มีอะไรเปลี่ยนเลย (วันเดิม + รอบเดิม + หมอเดิม) — กันไว้เพราะเลขคิวจะถูกคำนวณใหม่
+        - ถ้าระบุ staff_id ต้องผูกกับบริการ ไม่ลาวันนั้น และยังไม่เต็มคิวในรอบเวลานั้น
+        - ผู้รับบริการต้องไม่มีคิวอื่นของบริการนี้ในวันที่ระบุ
+        - ทุกอย่างอยู่ในธุรกรรมเดียว พร้อมล็อกแถวศูนย์สุขภาพและแถวนัดหมาย
+
+        **เลขคิวคำนวณใหม่จากวันใหม่ทุกครั้ง** — เลขเดิมนับรวมคิวของวันที่ย้ายออกไปแล้ว
+
+        ⚠️ **ผลที่ต้องยอมรับ: ใบนัดที่พิมพ์ไปแล้วจะบอกเลขคิวผิด**
+        เพราะระบบไม่เก็บประวัติการเลื่อน จึงย้อนกลับไม่ได้ ควรพิมพ์ใบนัดใหม่ทุกครั้งหลังเลื่อน
+      operationId: staffRescheduleAppointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RescheduleAppointmentRequest"
+      responses:
+        "200":
+          description: เลื่อนสำเร็จ — คืนนัดหมายใหม่ทั้งใบ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "เลื่อนคิวไปวันที่ 2026-10-05 เรียบร้อยแล้ว"
+                      data:
+                        $ref: "#/components/schemas/Appointment"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/staff/appointments/{id}/unmask:
     parameters:
       - $ref: "#/components/parameters/AppointmentId"
@@ -844,7 +906,7 @@ paths:
         ทุกครั้งที่สำเร็จจะถูกบันทึกใน audit_logs (staff_id, ip, user_agent)
         Throttle: 10 req/min ต่อผู้ใช้ (throttle:unmask)
 
-        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status และ reassign-staff):**
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status, reassign-staff และ reschedule):**
         STAFF ที่ไม่ได้รับมอบหมายบริการของคิวนั้น และไม่ได้เป็นผู้ถูกระบุในคิว → **403**
         การถูกปฏิเสธจะ**ไม่เขียน audit log** เพราะการเขียน log แปลว่ามีการเปิดข้อมูล ซึ่งไม่ได้เกิดขึ้น
         HC_ADMIN / SUPER_ADMIN ไม่ถูกจำกัด
@@ -2350,6 +2412,13 @@ paths:
         - HEALTH_CENTER_ADMIN: ไม่ต้องส่ง และถูกบังคับให้เป็นศูนย์ตนเอง
           (การส่ง `health_center_id` ของศูนย์อื่นไม่ทำให้นัดหมายไปตกศูนย์อื่น เพราะศูนย์ที่บันทึกมาจากบริการที่เลือก)
         - **ศูนย์ที่บันทึกในนัดหมายมาจากบริการที่เลือกเสมอ** ไม่ได้มาจากค่าใน body
+
+        **จองล่วงหน้าให้ผู้รับบริการที่ไม่มีอุปกรณ์** — ส่ง `appointment_date`
+        ใช้เมื่อผู้รับบริการโทรมานัดล่วงหน้า (ไม่มีอินเทอร์เน็ตหรือสมาร์ทโฟน)
+        จึงต้องพิมพ์ใบนัดให้จากหน้าจอนี้ ครั้งหน้าเขาเข้าสู่ระบบเองด้วยเบอร์ + วันเกิดได้
+        ไม่ส่ง `appointment_date` = วันนี้ ซึ่งเป็นการมาถึงหน้าเคาน์เตอร์ (พฤติกรรมเดิม)
+        - ย้อนหลังกว่าวันนี้ → 422
+        - ทุกอย่างที่เกี่ยวกับวันที่ (วันเปิดบริการ วันลาของบุคลากร) ตรวจด้วยวันที่จอง ไม่ใช่วันที่กด
       operationId: staffWalkInBooking
       requestBody:
         required: true
@@ -3790,6 +3859,26 @@ components:
           type: integer
           description: ID หมอ/เจ้าหน้าที่คนใหม่ (ต้องผูกกับ service_staff ของบริการในคิวนี้)
 
+    RescheduleAppointmentRequest:
+      type: object
+      required: [appointment_date, time_slot_id]
+      properties:
+        health_center_id:
+          type: integer
+          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+        appointment_date:
+          type: string
+          format: date
+          description: วันที่ต้องการเลื่อนไป (ต้องไม่ย้อนหลังกว่าวันนี้)
+          example: "2026-10-05"
+        time_slot_id:
+          type: integer
+          description: ช่วงเวลาใหม่ (ต้องเป็นของศูนย์เดิม และต้องเปิดให้บริการในวันที่ระบุ)
+        staff_id:
+          type: integer
+          nullable: true
+          description: บุคลากรคนใหม่ — ไม่ส่ง = ใช้คนเดิม (ต้องผูกบริการ ไม่ลาวันนั้น และไม่เต็มรอบ)
+
     WalkInBookingRequest:
       type: object
       required: [cid, first_name, last_name, phone_number, birth_date, service_id, time_slot_id]
@@ -3863,7 +3952,18 @@ components:
           description: ต้องเป็นบริการของ ศูนย์สุขภาพ ต้นสังกัด และต้องเปิดให้บริการในวันนัดหมาย
         time_slot_id:
           type: integer
-          description: ต้องเป็น time slot ที่เชื่อมกับ service นี้ และต้องเป็นวันที่เปิดให้บริการ (อยู่ใน Operating Days) ของบริการ/ช่วงเวลานั้น
+          description: ต้องเป็น time slot ที่เชื่อมกับ service นี้ และต้องเป็นวันที่เปิดให้บริการ (อยู่ใน Operating Days) ของบริการ/ช่วงเวลานั้น — ตรวจด้วยวันที่จอง ไม่ใช่วันที่กด
+        appointment_date:
+          type: string
+          format: date
+          nullable: true
+          description: |
+            วันที่ที่ต้องการจอง — ไม่บังคับ
+            ไม่ส่ง = วันนี้ (ผู้รับบริการมาถึงหน้าเคาน์เตอร์)
+            ส่ง = จองล่วงหน้าให้ผู้รับบริการที่ไม่มีอุปกรณ์ แล้วพิมพ์ใบนัดให้เขา
+            ต้องไม่ย้อนหลังกว่าวันนี้ → 422
+            วันลาของบุคลากรก็ถูกตรวจด้วยวันนี้ ไม่ใช่วันที่กด
+          example: "2026-10-05"
         staff_id:
           type: integer
           nullable: true
