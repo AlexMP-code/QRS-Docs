@@ -192,16 +192,17 @@
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
 | `GET` | `/v1/staff/appointments` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูนัดประจำวัน — ดูข้อจำกัดด้านล่าง |
-| `POST` | `/v1/staff/appointments/walk-in` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | นัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์ — STAFF → 403 |
+| `POST` | `/v1/staff/appointments/walk-in` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | นัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์ — STAFF → 403 · ส่ง `appointment_date` เพื่อจองล่วงหน้าให้ผู้รับบริการที่ไม่มีอุปกรณ์ (ไม่ส่ง = วันนี้) |
 | `PATCH` | `/v1/staff/appointments/{id}/status` | STAFF (เฉพาะบริการที่เข้าเงื่อนไขขอบเขต), HC_ADMIN, SUPER_ADMIN | เปลี่ยนสถานะ — transition เดียว: CONFIRMED → COMPLETED/CANCELLED/NO_SHOW; ดูข้อจำกัดการแตะคิวด้านล่าง |
 | `PATCH` | `/v1/staff/appointments/{id}/reassign-staff` | STAFF (เฉพาะบริการที่เข้าเงื่อนไขขอบเขต), HC_ADMIN, SUPER_ADMIN | ย้ายคิวไปบุคลากรคนอื่น — เฉพาะ CONFIRMED + `allow_staff_selection`; Audit Log; ตรวจโควตาในธุรกรรมเดียวกับการบันทึก |
+| `PATCH` | `/v1/staff/appointments/{id}/reschedule` | STAFF (เฉพาะบริการที่เข้าเงื่อนไขขอบเขต), HC_ADMIN, SUPER_ADMIN | เลื่อนคิวไปวันอื่น — แก้คิวเดิม เฉพาะ CONFIRMED; คำนวณเลขคิวใหม่จากวันใหม่; ดูข้อจำกัดการแตะคิวด้านล่าง |
 | `POST` | `/v1/staff/appointments/{id}/unmask` | STAFF (เฉพาะบริการที่เข้าเงื่อนไขขอบเขต), HC_ADMIN, SUPER_ADMIN | ดูข้อมูลผู้รับบริการเต็ม — **ข้อมูลอ่อนไหวตาม PDPA** (PDPA Audit Log); `throttle:unmask` 10 req/min; ดูข้อจำกัดการแตะคิวด้านล่าง |
 
-**ข้อจำกัดการแตะคิว (สิทธิ์) — ใช้เกณฑ์เดียวกันทั้งสามทาง:**
+**ข้อจำกัดการแตะคิว (สิทธิ์) — ใช้เกณฑ์เดียวกันทั้งสี่ทาง:**
 - คิวเป็นของศูนย์ แต่ "ใครทำกับคิวนี้ได้" ขึ้นกับสองเงื่อนไข เข้าได้อย่างน้อยหนึ่งทาง
   1. **ได้รับมอบหมายบริการนั้น** (`service_user`)
   2. **เป็นผู้ถูกระบุในคิวนั้น** (`appointments.staff_id` → `staff.user_id`)
-- **STAFF** ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้" ทั้งการเปลี่ยนสถานะ การย้ายคิว และการถอดข้อมูลผู้รับบริการ
+- **STAFF** ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้" ทั้งการเปลี่ยนสถานะ การย้ายคิว การเลื่อนวัน และการถอดข้อมูลผู้รับบริการ
 - ทางที่สองมีไว้เพราะคนที่ให้บริการจริงย่อมรู้ว่าเกิดอะไรขึ้นกับคิวนั้น และบางคนไม่ได้อยู่ในบริการที่ตนถูกมอบหมาย
 - **ระดับขอบเขตคือระดับบริการ** เจ้าหน้าที่ปฏิบัติงานที่ได้รับมอบหมายบริการหนึ่ง ทำงานกับทุกคิวของบริการนั้นได้ แม้ผู้รับบริการจะเลือกบุคลากรคนอื่น
 - **บริการที่ไม่ผูกชื่อบุคลากร** (นับตามช่วงเวลา/ทั้งวัน) คิวจะไม่มีผู้ถูกระบุ → ทางที่สองใช้ไม่ได้ ต้องได้รับมอบหมายหรือเป็นผู้ดูแลศูนย์เท่านั้น
@@ -216,8 +217,13 @@
 - **HC_ADMIN / SUPER_ADMIN**: เห็น**ทุกบริการ**ในศูนย์ (SUPER_ADMIN ไม่ส่ง `?health_center_id` = เห็นทุกศูนย์)
 - **นัดหมายเดินเข้ารับบริการ (หน้าเคาน์เตอร์)**: **เฉพาะผู้ดูแลศูนย์และผู้ดูแลระบบ** เจ้าหน้าที่ปฏิบัติงาน → 403
   ผู้ดูแลศูนย์ถือตารางเวลาและบุคลากรของศูนย์ทั้งหมด จึงออกนัดหมายได้ทุกบริการโดยไม่ต้องได้รับมอบหมาย
-  422 ถ้าศูนย์ไม่ได้เปิดรับการจอง หรือบริการปิดชั่วคราวเพราะบุคลากรทั้งหมดลาวันนี้
-- **updateStatus / reassignStaff / unmaskPatientData**: **STAFF ทำได้ทุกคิวในศูนย์** (ไม่จำกัด assigned services)
+  422 ถ้าศูนย์ไม่ได้เปิดรับการจอง หรือบริการปิดชั่วคราวเพราะบุคลากรทั้งหมดลา**วันที่จอง**
+- **จองล่วงหน้าให้ผู้รับบริการที่ไม่มีอุปกรณ์**: ส่ง `appointment_date` ใน `POST /walk-in`
+  ใช้เมื่อผู้รับบริการโทรมานัดล่วงหน้า จึงต้องพิมพ์ใบนัดให้จากหน้าจอนี้
+  ทุกอย่างที่เกี่ยวกับวันที่ (วันเปิดบริการ วันลาของบุคลากร) ตรวจด้วยวันที่จอง **ไม่ใช่วันที่กด**
+  คิวล่วงหน้าที่สร้างไว้ดูได้จาก `GET /appointments?date=` ซึ่งไม่จำกัดวัน
+  ยกเลิกคิวล่วงหน้าได้เหมือนคิววันนี้ แต่ยังบังคับเหตุผล (`cancellation_reason`)
+- **updateStatus / reassignStaff / reschedule / unmaskPatientData**: **STAFF ทำได้ทุกคิวในศูนย์** (ไม่จำกัด assigned services)
 
 ### 3.5 การจัดการข้อมูลผู้รับบริการ (Patient Data)
 
@@ -437,6 +443,7 @@
 | 3 | **Assigned Services scope** — STAFF เห็นและแตะคิวเฉพาะบริการที่ assign (หรือคิวที่ระบุชื่อเขา) | Controller (`index`) + Controller (`denyIfOutOfScope` — ทุกทางที่แตะคิว) | เดิมจำกัดแค่ `index` ทำให้ `updateStatus`/`unmask` รับเลขนัดหมายที่หน้าจอไม่เคยส่ง → สิ่งที่เห็นกับสิ่งที่ทำได้ไม่ตรงกัน; กติกาเดียวกันนี้ใช้ทั้งสามทางแล้ว และ **หน้าเคาน์เตอร์ไม่ใช่ของ STAFF** (route gate + role) |
 | 4 | **Operating Days Hard Gate** — แต่ละ (service,slot) มี `days_mask` (bit 1-7) | Request validation (book/walk-in) + `OperatingDayService::isSlotAvailableOnDate` | pivot `service_time_slot`; slot ต้อง active; **slot ต้องเป็นของศูนย์เดียวกับบริการ (บังคับทั้งโค้ดและ composite FK)** |
 | 5 | **Capacity & anti-overbooking** — นับ CONFIRMED ลดจากโควตาที่หักวันลาของวันนั้น; เลือกบุคลากร 1 คิว/รอบ/คน | `CapacityService` + `lockForUpdate` ใน transaction | ตอนกดจองส่งวันที่เข้าไปด้วย จึงได้โควตาตรงกับที่หน้าจอแสดง; ย้ายคิวก็ตรวจโควตาในธุรกรรมเดียวกับการบันทึก |
+| 5b | **เลขคิวคำนวณใหม่เมื่อเลื่อนวัน** — เลขเดิมนับรวมคิวของวันที่ย้ายออกไปแล้ว | `StaffAppointmentService::rescheduleAppointment()` | เก็บเลขเดิมจะชนกับคิวอื่นของวันใหม่; ระบบไม่เก็บประวัติการเลื่อน จึงย้อนกลับไม่ได้ — ใบนัดที่พิมพ์ไปแล้วจะบอกเลขผิด |
 | 6 | **Confirmed-queue guards** — ห้ามลบ/ปิดสิ่งที่กำลังมีคิว (services, staff, time-slot-days, user, leave, duty) | Service + Controller | **ช่วงเวลาไม่ลบเลย** ตาม ADR-0001 ใช้ปิดใช้งานแทน; การลบศูนย์/บริการ/ช่วงเวลาที่มีนัดหมายจะถูก FK `RESTRICT` บล็อก |
 | 7 | **Health Center Lifecycle** — ACTIVE/CLOSING/INACTIVE + auto-close job | Service (ผู้ดูแลระบบสลับสถานะ) + `CloseHealthCenterJob` | auto-close นับเฉพาะคิวตั้งแต่วันนี้ขึ้นไป คิวของวันที่ผ่านมาไม่นับ |
 | 8 | **Staff Selection** — `allow_staff_selection=true` บังคับ PER_MASSEUSE + selectable staff ≥1; ป้องกันการแกะหมอที่มีคิว | Service `update` + `syncStaff` | เปิด/ปิด + ผูกหมอต้องระดับ admin |
@@ -487,6 +494,7 @@
 | POST | `/v1/staff/appointments/walk-in` | **HC_ADMIN,SUPER_ADMIN** |
 | PATCH | `/v1/staff/appointments/{id}/status` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | PATCH | `/v1/staff/appointments/{id}/reassign-staff` | STAFF,HC_ADMIN,SUPER_ADMIN |
+| PATCH | `/v1/staff/appointments/{id}/reschedule` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | POST | `/v1/staff/appointments/{id}/unmask` | STAFF,HC_ADMIN,SUPER_ADMIN + `throttle:unmask` |
 | GET | `/v1/staff/roster` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | POST | `/v1/staff/roster` | STAFF,HC_ADMIN,SUPER_ADMIN |

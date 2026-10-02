@@ -1674,10 +1674,16 @@ paths:
         การค้นด้วยเลขบัตรประชาชนไม่จำกัดศูนย์ (ผู้รับบริการไม่ได้เป็นของศูนย์ใด)
         และเขียน Audit Log `LOOKUP_PATIENT_BY_CID` เมื่อพบผู้รับบริการ
 
+        **จองล่วงหน้าให้ผู้รับบริการที่ไม่มีอุปกรณ์** — ส่ง `appointment_date`
+        ใช้เมื่อผู้รับบริการโทรมานัดล่วงหน้า เขาไม่มีอินเทอร์เน็ตหรือสมาร์ทโฟน
+        จึงต้องพิมพ์ใบนัดให้จากหน้าจอนี้ ครั้งหน้าเขาเข้าสู่ระบบเองด้วยเบอร์ + วันเกิดได้
+        ไม่ส่ง `appointment_date` = วันนี้ ซึ่งเป็นการมาถึงหน้าเคาน์เตอร์ (พฤติกรรมเดิม)
+
         เงื่อนไขปฏิเสธ (422): ศูนย์ปิดรับจอง, ไม่ได้ Operating Days, บุคลากรลาทั้งหมด, ศูนย์เต็ม ฯลฯ
         - บริการที่เปิดให้เลือกบุคลากร: ต้องส่ง staff_id (ผูก, ACTIVE, ไม่ลา, ยังไม่เต็ม) → 422 ถ้าไม่ผ่าน
         - `right_type_id` **ไม่บังคับ** — ไม่ส่ง = นัดหมายไม่มีสิทธิการรักษาผูกไว้ (ต้องเป็นประเภท `status=ACTIVE`)
         - เบอร์โทรที่ถูกผูกกับผู้รับบริการคนอื่นอยู่แล้ว → 422 พร้อมเลขบัตรประชาชนเจ้าของเบอร์
+        - `appointment_date` ย้อนหลัง → 422
         - booked_by_type = STAFF เสมอ
       operationId: staffWalkInBooking
       requestBody:
@@ -1915,6 +1921,7 @@ paths:
         - STAFF: เห็นเฉพาะคิวของบริการที่ตัวเองถูกมอบหมาย (assignees) — บริการนอกเหนือ → 403
         - HC_ADMIN/SUPER_ADMIN: ทุกคิวของศูนย์ (SA ระบุ ?health_center_id)
         - กรองด้วย date / service_id / status
+        - **`date` ไม่จำกัดวัน** — ส่งวันอนาคตเพื่อดูคิวที่หมอจองไว้ล่วงหน้าให้ผู้รับบริการได้
       operationId: staffListAppointments
       parameters:
         - name: date
@@ -1922,6 +1929,7 @@ paths:
           schema:
             type: string
             format: date
+          description: วันที่ต้องการดู (ค่าเริ่มต้น = วันนี้ · ไม่จำกัดวัน)
         - name: service_id
           in: query
           schema:
@@ -2054,6 +2062,68 @@ paths:
                               position:
                                 type: string
                                 nullable: true
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/staff/appointments/{id}/reschedule:
+    parameters:
+      - $ref: "#/components/parameters/AppointmentId"
+
+    patch:
+      tags: ["6. Appointment & Queue"]
+      summary: "[Staff ที่เข้าเงื่อนไขขอบเขต / ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] เลื่อนคิวไปวันอื่น"
+      description: |
+        ใช้เมื่อหมอติดงานด่วนจนให้บริการไม่ได้ จึงโทรคุยกับผู้รับบริการแล้วย้ายวันมา
+        **แก้คิวเดิม** — ไม่สร้างคิวใหม่ ไม่ยกเลิกคิวเดิม จึงใช้ได้ทั้งคิวที่หมอจองให้ไว้ล่วงหน้า
+        และคิวที่ผู้รับบริการจองเองผ่านระบบ
+
+        **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status, reassign-staff และ unmask):**
+        STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้"
+        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`)
+
+        - คิวต้องยังเป็นสถานะ CONFIRMED (เสร็จ/ยกเลิก/ไม่มาแล้วเลื่อนไม่ได้ → 422)
+        - `appointment_date` ต้องไม่ย้อนหลังกว่าวันนี้ → 422
+        - ช่วงเวลาใหม่ต้องเปิดให้บริการในวันนั้น → 422
+        - ไม่มีอะไรเปลี่ยนเลย (วันเดิม + รอบเดิม + หมอเดิม) → 422
+          กันไว้เพราะเลขคิวจะถูกคำนวณใหม่จนคิวเดิมหายตำแหน่งโดยไม่มีเหตุผล
+        - ถ้าระบุ staff_id ต้องผูกกับบริการ ไม่ลาวันนั้น และไม่เต็มรอบ → 422
+        - ผู้รับบริการต้องไม่มีคิวอื่นของบริการนี้ในวันนั้น → 422
+        - ทุกอย่างอยู่ในธุรกรรมเดียว พร้อมล็อกแถวศูนย์สุขภาพและแถวนัดหมาย
+
+        **เลขคิวคำนวณใหม่จากวันใหม่ทุกครั้ง** — เลขเดิมนับรวมคิวของวันที่ย้ายออกไปแล้ว
+        เก็บไว้จะชนกับคิวอื่นของวันใหม่
+
+        ⚠️ **ผลที่ต้องยอมรับ: ใบนัดที่พิมพ์ไปแล้วจะบอกเลขคิวผิด**
+        เพราะระบบไม่เก็บประวัติการเลื่อน จึงย้อนกลับไม่ได้ ควรพิมพ์ใบนัดใหม่ทุกครั้งหลังเลื่อน
+      operationId: staffRescheduleAppointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RescheduleAppointmentRequest"
+      responses:
+        "200":
+          description: เลื่อนสำเร็จ
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "เลื่อนคิวไปวันที่ 2026-10-05 เรียบร้อยแล้ว"
+                      data:
+                        $ref: "#/components/schemas/Appointment"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -3499,6 +3569,26 @@ components:
           type: integer
           description: ID หมอ/เจ้าหน้าที่คนใหม่ (ต้องผูกกับ service_staff ของบริการในคิวนี้)
 
+    RescheduleAppointmentRequest:
+      type: object
+      required: [appointment_date, time_slot_id]
+      properties:
+        health_center_id:
+          type: integer
+          description: required เฉพาะผู้ดูแลระบบ (ศูนย์อื่นถูกบังคับเป็นศูนย์ตนเอง)
+        appointment_date:
+          type: string
+          format: date
+          description: วันที่ต้องการเลื่อนไป (ต้องไม่ย้อนหลังกว่าวันนี้)
+          example: "2026-10-05"
+        time_slot_id:
+          type: integer
+          description: ช่วงเวลาใหม่ (ต้องเป็นของศูนย์เดิม และต้องเปิดให้บริการในวันที่ระบุ)
+        staff_id:
+          type: integer
+          nullable: true
+          description: บุคลากรคนใหม่ — ไม่ส่ง = ใช้คนเดิม (ต้องผูกบริการ ไม่ลาวันนั้น และไม่เต็มรอบ)
+
     WalkInBookingRequest:
       type: object
       required: [cid, first_name, last_name, phone_number, birth_date, service_id, time_slot_id]
@@ -3528,6 +3618,17 @@ components:
           type: integer
         time_slot_id:
           type: integer
+          description: ช่วงเวลาที่จอง (ต้องเปิดให้บริการในวันที่จอง)
+        appointment_date:
+          type: string
+          format: date
+          nullable: true
+          description: |
+            วันที่ที่ต้องการจอง — ไม่ส่ง = วันนี้ (คนมาถึงหน้าเคาน์เตอร์)
+            ส่ง = จองล่วงหน้าให้ผู้รับบริการที่ไม่มีอุปกรณ์ แล้วพิมพ์ใบนัดให้เขา
+            ต้องไม่ย้อนหลังกว่าวันนี้ และทุกอย่างที่เกี่ยวกับวันที่
+            (วันเปิดบริการ วันลาของบุคลากร) ตรวจด้วยวันนี้ ไม่ใช่วันที่กด
+          example: "2026-10-05"
         right_type_id:
           type: integer
           nullable: true
