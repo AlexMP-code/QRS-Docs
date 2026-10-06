@@ -12,8 +12,8 @@
 |---|---|---|---|---|
 | 1 | `SUPER_ADMIN` | `role:staff` | User | ผู้ดูแลระบบระดับจังหวัด (อบจ./สสจ.) — cross-tenant access |
 | 2 | `HEALTH_CENTER_ADMIN` | `role:staff` | User | ผู้ดูแลระบบประจำ ศูนย์สุขภาพ — scope: ศูนย์ของตนเอง |
-| 3 | `STAFF` | `role:staff` | User | เจ้าหน้าที่ห้องตรวจ / หมอ / ผู้ช่วย — scope: ศูนย์ของตนเอง |
-| 4 | *(ไม่มี DB role)* | `role:patient` | Patient | ผู้รับบริการ / ผู้รับบริการ |
+| 3 | `STAFF` | `role:staff` | User | เจ้าหน้าที่ปฏิบัติงาน (แพทย์ พยาบาล ผู้ช่วย) — scope: ศูนย์ของตนเอง |
+| 4 | *(ไม่มี DB role)* | `role:patient` | Patient | ผู้รับบริการ |
 
 **หมายเหตุเกี่ยวกับบทบาทกับบัญชี:**
 - บทบาท**ไม่ใช่ชนิดของบัญชี** — หนึ่งบัญชีถือได้หลายบทบาทพร้อมกัน ผู้ดูแลศูนย์ที่ให้บริการเองจะมีทั้ง `HEALTH_CENTER_ADMIN` และ `STAFF`
@@ -58,16 +58,17 @@
 | `GET` | `/v1/patient/right-types` | สิทธิการรักษา — เฉพาะ `status=ACTIVE` (UCS, OFC, SSS, CASH, OTHER) |
 | `POST` | `/v1/patient/nearby-centers` | ค้นหา ศูนย์สุขภาพ ใกล้เคียง (Haversine; **เฉพาะ** ACTIVE + มีบริการ active ในหมวดที่เลือก; **ไม่มี** radius filter) |
 | `GET` | `/v1/patient/health-centers/{id}` | รายละเอียด ศูนย์สุขภาพ — **ACTIVE หรือ CLOSING** เห็นได้; INACTIVE → 404; คืน `status` ของศูนย์ด้วย |
-| `GET` | `/v1/patient/health-centers/{id}/services` | บริการของศูนย์ — เฉพาะ services `is_active=true` **และ** มี pivot `service_time_slot` ≥ 1 แถว **และ** อยู่หมวดหมู่ ACTIVE; แต่ละรายการคืน `allow_staff_selection`; envelope คืน `health_center_status`; response ผ่าน Resource (**ไม่มี** `created_at`/`updated_at`) |
+| `GET` | `/v1/patient/health-centers/{id}/services` | บริการที่ศูนย์นั้นเปิดให้บริการจริง — เฉพาะแถวตั้งค่าของศูนย์ที่ `is_active=true` **และ** มีช่วงเวลา ≥ 1 ช่วง **และ** อยู่หมวดหมู่ ACTIVE; ค่าของศูนย์ (โควตา สวิตช์ ผู้รับผิดชอบ บุคลากรที่เลือกได้) อยู่ใต้คีย์ `center_service` ไม่ได้อยู่แบนรวมกับบริการ; envelope คืน `health_center_status` |
 | `GET` | `/v1/patient/available-slots` | ตรวจสอบช่วงเวลาว่าง — พารามิเตอร์ **มีแค่** `service_id` + `date` (ต้อง `>= today`) |
 
 **หมายเหตุ available-slots (พฤติกรรมจริง):**
 - ไม่รับ `health_center_id` / `time_slot_id` — service ระบุศูนย์เอง
 - ถ้าศูนย์ไม่ใช่ ACTIVE (CLOSING/INACTIVE) → คืน **200 `slots: []`** (ไม่ใช่ error)
-- เช็ค "เปิดวันนี้ไหม" ผ่าน bit `days_mask` บน pivot `service_time_slot` + slot ต้อง `is_active`
+- เช็ค "เปิดวันนี้ไหม" ผ่าน bit `days_mask` บน pivot `health_center_service_time_slot` + slot ต้อง `is_active`
 - `available_count` คำนวณแบบ snapshot (ไม่มี row lock) → แสดงผลอาจ stale ได้เล็กน้อย; การจองจริงจะ re-check ใน transaction ⚠️
-- **`PER_MASSEUSE`** max capacity = นับผู้รับผิดชอบบริการ (`service_user`) **หักคนที่ลาวันนั้น** — นับจากผู้ผูกกับบริการโดยตรง ไม่ใช่ทั้งหมวดหมู่
-- **staff-selection** (`allow_staff_selection=true`): `available_count` = จำนวนบุคลากรที่เลือกได้ (`service_staff`) ที่ ACTIVE **และไม่ลาวันนั้น**, **PER_STAFF_PER_SLOT_LIMIT = 1**
+- **`PER_MASSEUSE`** โควตาสูงสุด = นับผู้รับผิดชอบบริการที่ศูนย์นั้น (`health_center_service_user`) **หักคนที่ลาวันนั้น** — นับจากผู้ผูกกับบริการของศูนย์นี้โดยตรง ไม่ใช่ทั้งหมวดหมู่
+- **เปิดให้ผู้รับบริการเลือกบุคลากร** (`allow_staff_selection=true`): `available_count` = จำนวนบุคลากรที่เลือกได้ (`health_center_service_staff`) ที่ ACTIVE **และไม่ลาวันนั้น**, **PER_STAFF_PER_SLOT_LIMIT = 1**
+- โควตาทุกแบบมาจากแถวตั้งค่าของศูนย์เจ้าของบริการนั้น ไม่ใช่ค่าของบริการ
 - บุคลากรที่ไม่มีบัญชีเจ้าหน้าที่ จะไม่มีวันลาในระบบ (วันลาเป็นของบัญชี) จึงยังนับเป็นผู้ให้บริการ
 - การนับเช็ควันลาทั้งสองกรณีผ่าน `StaffLeave.staff_user_id` ซึ่งชี้ไป `users.id` แต่ชุดข้อมูลที่นับ join คนละตาราง จึงต้องเทียบคอลัมน์ให้ตรง (`staff.user_id` หรือ `users.id`)
 
@@ -78,19 +79,19 @@
 | `POST` | `/v1/patient/book` | จองคิว — ระบบออกเลขคิว Sequential (ต่อศูนย์/ต่อวัน) |
 
 **ลำดับการเช็คใน code (BookingService::createAppointment — transaction + lockForUpdate):**
-1. Service ต้อง `is_active` → ผิด 422
+1. ศูนย์ต้องมีแถวตั้งค่าของบริการนี้ และแถวนั้นต้อง `is_active` → ผิด 422
 2. ศูนย์ต้อง `ACTIVE` ผ่าน `HealthCenter::isBookable()` → **CLOSING / INACTIVE บล็อก** "ศูนย์ปิดรับการจองใหม่"
-3. วันที่ต้องเปิดตาม `days_mask` ของ pivot + slot `is_active` → ผิด 422 "บริการนี้ไม่เปิดให้บริการในวันที่เลือก"
+3. วันที่ต้องเปิดตาม `days_mask` ของ pivot แถวตั้งค่าของศูนย์ + slot `is_active` → ผิด 422 "บริการนี้ไม่เปิดให้บริการในวันที่เลือก"
 4. **เช็คจองซ้ำ** เฉพาะ appointment ที่ `status=CONFIRMED` วันที่+บริการเดียวกัน → 422 (ดูหัวข้อถัดไป)
-5. ถ้า `allow_staff_selection=true`: ต้องส่ง `staff_id` บังคับ; เช็ค staff ACTIVE + ผูก `service_staff` + ไม่ลา + ยังไม่อิ่มคิว (1 คิว/รอบเวลา/คน) → ผิด 422
-6. เช็ค capacity (เฉพาะนับ CONFIRMED): `PER_DAY` นับทั้งวัน, `PER_SLOT`/`PER_MASSEUSE` นับต่อ slot → เต็ม 422
+5. ถ้า `allow_staff_selection=true`: ต้องส่ง `staff_id` บังคับ; เช็ค บุคลากร ACTIVE + อยู่ในรายชื่อที่ศูนย์นี้ให้เลือก + ไม่ลา + ยังไม่อิ่มคิว (1 คิว/รอบเวลา/คน) → ผิด 422
+6. เช็คโควตาของศูนย์นั้น (เฉพาะนับ CONFIRMED): แบบนับทั้งวันนับรวมทั้งวัน, อีกสองแบบนับต่อช่วงเวลา → เต็ม 422
 7. เลขคิว = max(`appointment_number`) ของ `(health_center_id, appointment_date)` + 1 (unique constraint รองรับ)
 8. สถานะเริ่มต้น = `CONFIRMED`, `booked_by_type = SELF`; dispatch Discord notification (async)
 
 **ข้อปลีกย่อยที่นักพัฒนาต้องรู้:**
 - ✅ **ข้อความ error ของ booking ถึงผู้รับบริการแล้ว** — เงื่อนไขทางธุรกิจ (คิวเต็ม จองซ้ำ บริการปิด ศูนย์ปิดรับจอง) ตอบข้อความจริงกลับไป; ข้อผิดพลาดที่ไม่คาดคิด (เช่น ฐานข้อมูลล่ม) ตอบ 500 พร้อมข้อความทั่วไปและบันทึกรายละเอียดไว้ใน log เท่านั้น (แก้แล้ว เดิมกลืนทุกข้อความ)
-- ✅ **การจองเช็ค "บุคลากรทั้งหมดลา" เหมือนหน้าเคาน์เตอร์แล้ว** — `BookingService` เรียก `StaffLeave::isServiceAvailable()` ก่อนจอง (แก้ gap #6); ถ้าไม่มี pool (assigned/selectable) ที่กำหนด → ถือว่าเปิดให้บริการ (ให้ capacity/operating-day ตัดสิน)
-- ✅ **โควตาหักวันลาของวันที่กำลังดู/กำลังจอง** — `getMaxCapacity($service, $date)`; ก่อนแก้ตอนกดจองไม่ส่งวันที่ จึงได้โควตาเต็มแม้หน้าจอแสดงว่าหมด (แก้แล้ว)
+- ✅ **การจองเช็ค "บุคลากรทั้งหมดลา" เหมือนหน้าเคาน์เตอร์แล้ว** — ถ้าไม่มี pool (ผู้รับผิดชอบ/ผู้ที่เลือกได้) ที่กำหนดไว้ในแถวตั้งค่าของศูนย์ → ถือว่าเปิดให้บริการ (ให้โควตาและวันให้บริการตัดสิน)
+- ✅ **โควตาหักวันลาของวันที่กำลังดู/กำลังจอง** — นับจากแถวตั้งค่าของศูนย์เจ้าของบริการ พร้อมวันที่ที่กำลังดู; ก่อนแก้ตอนกดจองไม่ส่งวันที่ จึงได้โควตาเต็มแม้หน้าจอแสดงว่าหมด (แก้แล้ว)
 - ✅ **หน้าเคาน์เตอร์เก็บข้อมูลเท่าการลงทะเบียน** — `cid/ชื่อ/นามสกุล/เบอร์/วันเกิด` บังคับ ที่เหลือ optional; `right_type_id` **ไม่บังคับ** (ไม่ส่ง = นัดหมายไม่มีสิทธิผูกไว้) และเบอร์โทรที่ชนคนอื่นตอบ 422 พร้อมเลขบัตรประชาชนเจ้าของเบอร์ (แก้แล้ว)
 - จองซ้ำได้ถ้าคิวก่อนหน้าเป็น CANCELLED / COMPLETED / NO_SHOW (นับเฉพาะ CONFIRMED)
 
@@ -117,7 +118,7 @@
 
 ---
 
-## 3. Staff (เจ้าหน้าที่ / หมอ / ผู้ให้บริการ)
+## 3. ฝั่งเจ้าหน้าที่ (บัญชีเจ้าหน้าที่ + บุคลากร)
 
 > **คำสำคัญ:** Staff ทุกคนถูกจำกัด scope ด้วย `health_center_id` ของตัวเอง (ยกเว้น SUPER_ADMIN ที่ต้องระบุ `health_center_id` ทุกครั้งในรายการ write ตามกฎหลัก — **ยกเว้น** time-slots ⚠️ มีรายละเอียดใน §5)
 
@@ -173,16 +174,49 @@
 
 ### 3.3 การจัดการบริการ (Services)
 
+บริการแบ่งเป็นสองชั้น คนละสิทธิ์กัน — ดูหัวข้อย่อยทั้งสองชั้นด้านล่าง
+
+#### 3.3.1 รายการบริการกลาง (ผู้ดูแลระบบเท่านั้น)
+
 | Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
 |---|---|---|---|
-| `GET` | `/v1/staff/services` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูบริการ — STAFF/HC_ADMIN ศูนย์ตัวเอง; SUPER_ADMIN ทุกศูนย์ หรือ `?health_center_id=`; `?date=` ซ่อนบริการที่ staff (assigned/selectable) ลางานทั้งหมดวันนั้น (เฉพาะเมื่อมี center scope ชัดเจน) |
-| `POST` | `/v1/staff/services` | STAFF, HC_ADMIN, SUPER_ADMIN | เพิ่มบริการ — **STAFF ทำได้จริง**; บังคับ `allow_staff_selection=false` ตอนสร้างเสมอ; `capacity_type` ∈ PER_MASSEUSE/PER_SLOT/PER_DAY |
-| `PUT` | `/v1/staff/services/{id}` | STAFF, HC_ADMIN, SUPER_ADMIN | แก้บริการ — **STAFF ทำได้จริง**; เปิด staff-selection ต้อง PER_MASSEUSE + มี selectable staff ≥1; ปิดต้องไม่มีคิว CONFIRMED ตั้งแต่วันนี้เป็นต้นไป |
-| `PATCH` | `/v1/staff/services/{id}/toggle-status` | STAFF, HC_ADMIN, SUPER_ADMIN | เปิด/ปิดบริการ — **STAFF ทำได้จริง** (ไม่มี in-controller gate) |
-| `DELETE` | `/v1/staff/services/{id}` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ลบบริการ (**STAFF → 403 "ไม่มีสิทธิ์ลบบริการ"**); 422 ถ้ามีคิว CONFIRMED ตั้งแต่วันนี้ |
-| `PUT` | `/v1/staff/services/{id}/assignees` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ผูก User (role **STAFF** เท่านั้น) เข้ากับบริการ — STAFF ไม่ได้; user ต้องอยู่ศูนย์เดียวกัน |
-| `PUT` | `/v1/staff/services/{id}/staff` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ผูกหมอที่เลือกได้ (selectable staff, pivot `service_staff`) — STAFF ไม่ได้; หมอต้องศูนย์เดียวกัน + หมวดหมู่เดียวกับบริการ; แกะหมอที่มีคิว CONFIRMED อนาคตไม่ได้; Audit Log |
-| `PUT` | `/v1/staff/services/{id}/time-slot-days` | **HC_ADMIN, SUPER_ADMIN เท่านั้น** | ตั้งค่าวันเปิด (Recurring Weekly ผ่าน `days_mask` bit 1-7); ห้ามลบ (slot,วัน) ที่มีคิว CONFIRMED อนาคต; Audit Log |
+| `GET` | `/v1/staff/admin/services` | **SUPER_ADMIN เท่านั้น** | รายการบริการทั้งจังหวัด — ไม่ระบุ `?health_center_id=` = ทั้งรายการกลาง (มีแต่ `centers[]` ว่าศูนย์ไหนเปิดอยู่); ระบุ = เฉพาะบริการที่ศูนย์นั้นมีแถวตั้งค่า และทับค่าของศูนย์ลงรายการนั้น; ศูนย์ที่ไม่มีอยู่จริง → 404 (ไม่ใช่รายการว่าง) |
+| `POST` | `/v1/staff/admin/services` | **SUPER_ADMIN เท่านั้น** | เพิ่มบริการเข้ารายการกลาง — รับเฉพาะ `category_id`, `name`, `description`; ชื่อห้ามซ้ำทั้งระบบ (นับชื่อที่ลบแล้วด้วย) |
+| `PUT` | `/v1/staff/admin/services/{id}` | **SUPER_ADMIN เท่านั้น** | แก้หมวดหมู่/ชื่อ/คำอธิบาย — ค่าที่เป็นของศูนย์แก้ที่นี่ไม่ได้ |
+| `DELETE` | `/v1/staff/admin/services/{id}` | **SUPER_ADMIN เท่านั้น** | ลบออกจากรายการกลาง (soft delete) — 422 ถ้ายังมีศูนย์ใดมีแถวตั้งค่าของบริการนี้ (แม้ปิดอยู่ก็ตาม) หรือมีคิว CONFIRMED ตั้งแต่วันนี้ **ข้ามทุกศูนย์**; ตอบ 204 |
+
+#### 3.3.2 ค่าตั้งบริการรายศูนย์ (แถวตั้งค่าหนึ่งแถวต่อหนึ่งศูนย์-หนึ่งบริการ)
+
+| Method | Endpoint | Roles ที่เข้าถึงได้ | คำอธิบาย |
+|---|---|---|---|
+| `GET` | `/v1/staff/health-centers/{id}/services` | STAFF, HC_ADMIN, SUPER_ADMIN | อ่านรายการบริการของศูนย์หนึ่งแห่ง พร้อมค่าตั้งของศูนย์ (อย่างเดียว) — คืนรายการกลางทั้งหมด ทับด้วยค่าของศูนย์นี้; **เจ้าหน้าที่ปฏิบัติงานอ่านได้เฉพาะศูนย์ตัวเอง** (ศูนย์ในพาธมีไว้ยืนยันว่าไม่ได้ขอศูนย์อื่น → ต่างกัน 403); `?date=` เหลือเฉพาะบริการที่ศูนย์เปิดอยู่และมีช่วงเวลาเปิดในวันนั้น; คืนชื่อผู้รับผิดชอบและผู้ที่ผู้รับบริการเลือกได้ พร้อมกัน |
+| `POST` | `/v1/staff/health-centers/{id}/services` | **HC_ADMIN (ศูนย์ตัวเอง), SUPER_ADMIN** | เปิดบริการจากรายการกลางให้ศูนย์นี้ พร้อมตั้งค่าให้ครบในคำขอเดียว; เปิดซ้ำไม่ได้; ต้องตั้งค่าครบจึงจะสำเร็จ; Audit Log |
+| `PATCH` | `/v1/staff/health-center-services/{id}` | **HC_ADMIN (ศูนย์ตัวเอง), SUPER_ADMIN** | แก้ค่าตั้งของแถวนั้น (ส่งเฉพาะที่เปลี่ยน) — แถวที่เปิดอยู่ต้องยังครบหลังแก้; แถวที่ปิดอยู่เก็บค่าค้างได้; Audit Log (เก็บค่าก่อน/หลัง) |
+| `PATCH` | `/v1/staff/health-center-services/{id}/toggle-status` | **HC_ADMIN (ศูนย์ตัวเอง), SUPER_ADMIN** | เปิด/ปิด — **เปิดต้องตั้งค่าครบ** (บังคับที่ตรงนี้ ไม่ใช่ตอนกรอกฟอร์ม) จึงปฏิเสธค่าตั้งค้างที่เคยทำไว้เมื่อกลับมาเปิด; ปิดต้องไม่มีคิวค้าง; ค่าตั้งยังอยู่ทั้งหมด; Audit Log |
+| `DELETE` | `/v1/staff/health-center-services/{id}` | **HC_ADMIN (ศูนย์ตัวเอง), SUPER_ADMIN** | เอาบริการออกจากศูนย์นี้ — ต้องไม่มีคิวค้าง; **ค่าตั้งหายไปด้วย** (ต่างจากการปิด) จึงต้องกรอกใหม่เมื่อเปิดคืน; บริการในรายการกลางไม่ถูกลบ; Audit Log |
+
+#### 3.3.3 กติกาความครบของค่าตั้งหนึ่งศูนย์
+
+ศูนย์ให้บริการได้ก็ต่อเมื่อค่าตั้งของศูนย์ครบทั้งหมดนี้ ขาดข้อใดข้อหนึ่ง = ยังเปิดให้บริการไม่ได้:
+
+1. `capacity_type` — วิธีนับโควตา
+2. โควตาตัวเลข ถ้าวิธีที่เลือกต้องใช้ — `max_per_slot` เมื่อ PER_SLOT, `max_per_day` เมื่อ PER_DAY
+3. ถ้าเปิด `allow_staff_selection` ต้องเป็น PER_MASSEUSE (เลือกบุคลากรแล้วโควตาต้องนับตามเขา)
+4. ถ้าเปิด `allow_staff_selection` ต้องมีผู้ที่ผู้รับบริการเลือกได้อย่างน้อย 1 คน (เปิดไว้แต่ไม่มีใครให้เลือก = ผู้รับบริการมาถึงหน้าเคาน์เตอร์แล้วเลือกไม่ได้)
+5. ช่วงเวลาที่เปิดอย่างน้อย 1 ช่วง และแต่ละช่วงมีวันอย่างน้อย 1 วัน
+6. ผู้รับผิดชอบบริการอย่างน้อย 1 คน
+
+ข้อความปฏิเสธระบุรายการที่ขาด **ทั้งหมดพร้อมกัน** ไม่ใช่ทีละช่อง เพราะผู้ดูแลศูนย์ต้องการกรอกให้เสร็จในรอบเดียว
+
+#### 3.3.4 ทำไมบริการเป็นของทั้งจังหวัด แต่ค่าตั้งเป็นของศูนย์
+
+โครงสร้างนี้ตั้งใจแยกสองเรื่องที่เคยปนอยู่ในบริการแถวเดียว อ่านผิดแล้วจะ "แก้กลับ" โดยไม่รู้ว่ากำลังทำอะไร
+
+- **บริการเป็นของทั้งจังหวัด** — "ตรวจสุขภาพทั่วไป" คือบริการเดียวกันทุกศูนย์ ถ้าปล่อยให้แต่ละศูนย์สร้างเอง ชื่อจะเพี้ยนจนไม่รู้ว่าเป็นบริการเดียวกัน และผู้ดูแลระบบจะเห็น 71 แถวที่ต่างกันแทนที่จะเห็นบริการหนึ่งที่เปิด 40 ศูนย์ ผู้ดูแลระบบจึงเป็นผู้เดียวที่สร้าง แก้ และลบได้
+- **ค่าตั้งเป็นของศูนย์** — โควตา วันให้บริการ ผู้รับผิดชอบ และบุคลากรที่ผู้รับบริการเลือกได้ ล้วนเป็นเรื่องของศูนย์นั้น ศูนย์หนึ่งมีบุคลากรแค่ 3 คน นับโควตาตามบุคลากรได้ 3 คิว อีกศูนย์มี 10 คน ได้ 10 คิว ค่าเดียวกันบนบริการเดียวกันจึงเป็นคำตอบที่ผิดสำหรับทั้งสองศูนย์ และศูนย์หนึ่งเปลี่ยนโควตาต้องไม่ไปกระทบอีกศูนย์
+- **คิวเป็นของศูนย์** — นัดหมายผูกกับศูนย์และบริการ ถ้าค่าของศูนย์อยู่บนบริการ เมื่อศูนย์แก้ค่า ประวัติคิวของอีกศูนย์จะอ่านผิดไปด้วย
+
+ดังนั้น "บริการหนึ่งบริการ" ไม่เท่ากับ "ศูนย์หนึ่งแห่งให้บริการนั้น" อย่างที่ทำกันมา ถ้าจำเป็นต้องดูว่าศูนย์ให้บริการอะไร ให้ถามที่แถวตั้งค่าของศูนย์ ไม่ใช่ที่บริการ
 
 ### 3.4 การจัดการนัดหมาย (Appointments & Queue Desk)
 
@@ -197,7 +231,7 @@
 
 **ข้อจำกัดการแตะคิว (สิทธิ์) — ใช้เกณฑ์เดียวกันทั้งสี่ทาง:**
 - คิวเป็นของศูนย์ แต่ "ใครทำกับคิวนี้ได้" ขึ้นกับสองเงื่อนไข เข้าได้อย่างน้อยหนึ่งทาง
-  1. **ได้รับมอบหมายบริการนั้น** (`service_user`)
+  1. **ได้รับมอบหมายบริการนั้น** ที่ศูนย์ของตัวเอง (ผูกกับแถวตั้งค่าของศูนย์นั้น)
   2. **เป็นผู้ถูกระบุในคิวนั้น** (`appointments.staff_id` → `staff.user_id`)
 - **STAFF** ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้" ทั้งการเปลี่ยนสถานะ การย้ายคิว การเลื่อนวัน และการถอดข้อมูลผู้รับบริการ
 - ทางที่สองมีไว้เพราะคนที่ให้บริการจริงย่อมรู้ว่าเกิดอะไรขึ้นกับคิวนั้น และบางคนไม่ได้อยู่ในบริการที่ตนถูกมอบหมาย
@@ -210,7 +244,7 @@
 - กติกานี้อยู่ที่จุดเดียว (`StaffAppointmentController::denyIfOutOfScope`) ทุกทางที่แตะคิวต้องผ่าน — กติกาที่เขียนแยกจุดจะไม่ขยายไปทางใหม่ในอนาคต
 
 **ข้อจำกัดการมองเห็น (index) — ตามจริง:**
-- **STAFF** (ไม่มี role บริหาร): เห็นเฉพาะนัดของ **Assigned Services** (`service_user` pivot) ของตัวเอง; 403 ถ้า filter `service_id` ที่ไม่ได้รับมอบหมาย
+- **STAFF** (ไม่มี role บริหาร): เห็นเฉพาะนัดของบริการที่ตัวเองได้รับมอบหมาย **ในศูนย์ของตัวเอง**; 403 ถ้า filter `service_id` ที่ไม่ได้รับมอบหมาย
 - **HC_ADMIN / SUPER_ADMIN**: เห็น**ทุกบริการ**ในศูนย์ (SUPER_ADMIN ไม่ส่ง `?health_center_id` = เห็นทุกศูนย์)
 - **นัดหมายเดินเข้ารับบริการ (หน้าเคาน์เตอร์)**: **เฉพาะผู้ดูแลศูนย์และผู้ดูแลระบบ** เจ้าหน้าที่ปฏิบัติงาน → 403
   ผู้ดูแลศูนย์ถือตารางเวลาและบุคลากรของศูนย์ทั้งหมด จึงออกนัดหมายได้ทุกบริการโดยไม่ต้องได้รับมอบหมาย
@@ -232,7 +266,7 @@
 
 **ข้อจำกัดขอบเขตของการแก้เบอร์โทร (`PATCH /patients/{id}/contact`) — STAFF เท่านั้น:**
 - ผู้รับบริการ**ไม่ได้ผูกกับบริการโดยตรง** เขาผูกกับผ่านประวัติคิว จึงถามว่า "เคยมีคิวในบริการที่ฉันดูแลไหม"
-- **ผ่าน** = มีนัดหมายอย่างน้อยหนึ่งครั้งในบริการที่ถูกมอบหมาย (`service_user`) ที่ศูนย์นั้น
+- **ผ่าน** = มีนัดหมายอย่างน้อยหนึ่งครั้งในบริการที่ถูกมอบหมาย ที่ศูนย์นั้น
 - **ไม่จำกัดวัน** เพราะเบอร์ที่ผิดมักถูกแก้หลังการมาเยือนเสร็จไปแล้ว การจำกัดวันจะไปโดนเคสที่ต้องใช้จริงที่สุด
 - **มีคิวหนึ่งครั้งก็พอ** ต่อให้ครั้งล่าสุดจะไปบริการอื่น ผู้รับบริการคนเดิมยังแก้เบอร์ได้
 - ไม่ผ่าน → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้" และ **ไม่เขียน audit log**
@@ -269,15 +303,18 @@
 | `GET` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ดูวันลา — filter `?date=`, `?staff_user_id=`; response ผ่าน `StaffLeaveResource` (**ไม่มี** `created_at`/`updated_at`) |
 | `POST` | `/v1/staff/leaves` | STAFF, HC_ADMIN, SUPER_ADMIN | ลงวันลา (auto-approved) — `leave_date >= today` (ย้อนหลังไม่ได้); บล็อกถ้ามีคิว CONFIRMED ในวันนั้น; **idempotent** (ซ้ำวันเดิมคืน row เดิม, HTTP 200); บัญชีที่ยังไม่มีโปรไฟล์บุคลากรในศูนย์นั้น → **422** ให้เพิ่มโปรไฟล์ก่อน (ระบบไม่เดาว่าบัญชีไหนคือบุคลากรคนไหน) |
 | `DELETE` | `/v1/staff/leaves/{id}` | STAFF, HC_ADMIN, SUPER_ADMIN | ลบวันลา — scope ตามด้านล่าง |
-| `GET` | `/v1/staff/leaves/availability` | STAFF, HC_ADMIN, SUPER_ADMIN | เช็คว่าบริการเปิดให้บริการวันที่นั้นหรือไม่ (`service_id`+`date` บังคับ) |
+| `GET` | `/v1/staff/leaves/availability` | STAFF, HC_ADMIN, SUPER_ADMIN | เช็คว่าบริการนั้นเปิดให้บริการวันที่ระบุที่ศูนย์นี้หรือไม่ (`service_id`+`date` บังคับ) — ศูนย์ที่ยังไม่ได้เปิดบริการจะได้ `available: false` |
 
 **ข้อจำกัดการจัดการวันลา (ตามจริง):**
 - **STAFF**: ลงให้**ตัวเองเท่านั้น**; ลบได้เฉพาะของตัวเอง (**ถ้าไม่ใช่ → 404** "ไม่พบวันลาที่ระบุ" ซึ่งปกปิดว่ามีอยู่ — ไม่ใช่ 403)
 - **HC_ADMIN**: ลงให้ใครก็ได้ในศูนย์ตัวเอง (Request rule เช็ค `health_center_id` ตรง); ลบได้เฉพาะ leave ของศูนย์ตัวเอง (อื่น → 404)
 - **SUPER_ADMIN**: ลงให้ใครก็ได้; ลบได้ทุกที่
 - ลงวันลาซ้ำวันเดิม → ไม่สร้างซ้ำ (firstOrCreate)
-- **Rule กลาง** ของ "บริการเปิดให้จองวัน X ได้ไหม" คือ `StaffLeave::isServiceAvailable(service_id, date, health_center_id)` — ใช้ร่วมกัน 3 จุด: `GET /v1/staff/services?date=` (ซ่อนบริการที่ staff ทั้งหมดลาในวันนั้น), `GET /v1/staff/leaves/availability` (คืน bool ต่อ 1 service), และ `POST /v1/staff/appointments/walk-in` (บังคับ server-side ป้องกัน race) — `services?date=` คือ **canonical source** ของความพร้อมของบริการในมุม staff; availability เป็น convenience bool จาก rule เดียวกัน
-- **ความหมาย "หมอไม่ว่าง" มี 2 กลไก (อย่าสับสน):** `POST/DELETE /v1/staff/leaves` = **ลาหยุดเฉพาะวัน** (ผูก `leave_date`); `PATCH /v1/staff/roster/{id}/toggle-duty` เปลี่ยน `Staff.status=LEAVE` = **ปิดรับจองแบบต่อเนื่อง** จนกว่าจะสลับกลับ — `GET /v1/staff/roster?date=` merge ทั้งสองเป็น `effective_status` (ผลรวมหมายถึงหมอคนนั้นรับจองวันนั้นไม่ได้)
+- **Rule กลาง** ของ "บริการเปิดให้จองวัน X ได้ไหม" คือ `StaffLeave::isServiceAvailable(service_id, date, health_center_id)` — ใช้ร่วมกัน 3 จุด: `GET /v1/staff/leaves/availability` (คืน bool ต่อ 1 บริการ), `POST /v1/staff/appointments/walk-in` และการจองของผู้รับบริการ (บังคับ server-side ป้องกัน race)
+  - ศูนย์ที่ยังไม่ได้เปิดบริการนี้ → `false` เสมอ เพราะคำถามนี้ผูกกับแถวตั้งค่าของศูนย์ ไม่ใช่กับบริการเดียวกันทั่วจังหวัด
+  - ถ้ายังไม่มี pool บุคลากรที่กำหนดไว้ในแถวตั้งค่า → ถือว่าว่าง ให้โควตาและวันให้บริการตัดสิน
+  - ⚠️ `?date=` ของ `GET /v1/staff/health-centers/{id}/services` **ไม่ได้**ใช้ rule นี้ — มันกรองว่าศูนย์เปิดบริการและมีช่วงเวลาเปิดในวันนั้นหรือไม่ ไม่ได้ตัดบริการที่บุคลากรลาทั้งหมด ⚠️
+- **ความหมาย "บุคลากรไม่ว่าง" มี 2 กลไก (อย่าสับสน):** `POST/DELETE /v1/staff/leaves` = **ลาหยุดเฉพาะวัน** (ผูก `leave_date`); `PATCH /v1/staff/roster/{id}/toggle-duty` เปลี่ยน `Staff.status=LEAVE` = **ปิดรับจองแบบต่อเนื่อง** จนกว่าจะสลับกลับ — `GET /v1/staff/roster?date=` merge ทั้งสองเป็น `effective_status` (ผลรวมหมายถึงบุคลากรคนนั้นรับจองวันนั้นไม่ได้)
 
 ### 3.8 การดูรายชื่อ ศูนย์สุขภาพ (Dropdown)
 
@@ -295,14 +332,18 @@
 
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
-| `DELETE` | `/v1/staff/services/{id}` | ลบบริการ (STAFF ห้ามลบ) |
-| `PUT` | `/v1/staff/services/{id}/staff` | ผูกหมอที่เลือกได้ (selectable staff) เข้ากับบริการ |
-| `PUT` | `/v1/staff/services/{id}/time-slot-days` | ตั้งค่าวันเปิดให้บริการ (Operating Days) |
+| `POST` | `/v1/staff/health-centers/{id}/services` | เปิดบริการจากรายการกลางให้ศูนย์ตน พร้อมตั้งค่าให้ครบ (ศูนย์ต้องเป็นของตน) |
+| `PATCH` | `/v1/staff/health-center-services/{id}` | แก้ค่าตั้งของแถวที่เป็นของศูนย์ตน |
+| `PATCH` | `/v1/staff/health-center-services/{id}/toggle-status` | เปิด/ปิดบริการที่ศูนย์ตนเปิดไว้ (เปิดต้องตั้งค่าครบ) |
+| `DELETE` | `/v1/staff/health-center-services/{id}` | เอาบริการออกจากศูนย์ตน (ค่าตั้งหาย) |
 | `PATCH` | `/v1/staff/patients/{id}` | แก้ไขข้อมูลผู้รับบริการเต็มรูปแบบ |
 | `GET` | `/v1/staff/admin/patients` | ค้นหาผู้รับบริการ — ด้วย `cid` ไม่จำกัดศูนย์, ด้วยชื่อ/เบอร์/ที่อยู่จำกัดศูนย์ |
 | `POST` | `/v1/staff/appointments/walk-in` | **นัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์** — หน้าที่ของผู้ดูแลศูนย์ |
 
-**สิทธิ์ที่ HC_ADMIN มีเพิ่ม (แต่ STAFF ไม่มี):** ดู/จัดการ user management, ดู time slots, toggle time slot ในศูนย์ตัวเอง, แก้ health center ของตัวเอง, syncStaff/syncTimeSlotDays, **สร้างนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์** — ดู §4.2-4.4
+**สิทธิ์ที่ HC_ADMIN มีเพิ่ม (แต่ STAFF ไม่มี):** ค่าตั้งบริการรายศูนย์ทั้งสี่ทาง, ดู/จัดการ user management, ดู time slots, toggle time slot ในศูนย์ตัวเอง, แก้ health center ของตัวเอง, **สร้างนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์** — ดู §4.2-4.4
+
+> **ผู้ดูแลศูนย์ไม่ได้สร้างหรือลบบริการในรายการกลาง** — รายการนั้นเป็นของผู้ดูแลระบบ
+> สิทธิ์ของผู้ดูแลศูนย์อยู่ที่ "ศูนย์นี้จะเปิดบริการไหน และเปิดอย่างไร" เท่านั้น
 
 ### 4.2 การจัดการผู้ใช้งาน (User Management)
 
@@ -361,6 +402,10 @@
 | `PATCH` | `/v1/staff/discord/webhook` | ตั้งค่า/ยกเลิก Discord Webhook (ส่ง null = ลบ) — **บังคับ `health_center_id` (422/404)**; regex URL `https://discord.com/api/webhooks/{id}/{token}` |
 | `PATCH` | `/v1/staff/admin/health-centers/{id}/toggle-status` | สลับสถานะศูนย์ — ACTIVE↔CLOSING, INACTIVE→ACTIVE; **ต้องระบุ `health_center_id` ตรงกับ path {id}**; มี `lockForUpdate` + Audit Log |
 | `GET` | `/v1/staff/admin/health-centers` | ทุกศูนย์ ทุก status พร้อม filter (q/code/province/district/status) + paginate |
+| `GET` | `/v1/staff/admin/services` | รายการบริการกลางทั้งจังหวัด — `?health_center_id=` จำกัดเฉพาะบริการที่ศูนย์นั้นมีแถวตั้งค่า และทับค่าของศูนย์ลงรายการนั้น; ศูนย์ที่ไม่มีอยู่จริง → 404 (ไม่ใช่รายการว่าง); ทุกรายการมี `centers[]` ว่าศูนย์ไหนเปิดอยู่และตั้งค่าครบแค่ไหน |
+| `POST` | `/v1/staff/admin/services` | เพิ่มบริการเข้ารายการกลาง — เฉพาะ `category_id`, `name`, `description`; ชื่อห้ามซ้ำทั้งระบบ (นับชื่อที่ลบแล้วด้วย) |
+| `PUT` | `/v1/staff/admin/services/{id}` | แก้หมวดหมู่/ชื่อ/คำอธิบายของบริการในรายการกลาง |
+| `DELETE` | `/v1/staff/admin/services/{id}` | ลบออกจากรายการกลาง (soft delete, ตอบ 204) — 422 ถ้ายังมีศูนย์ใดมีแถวตั้งค่าของบริการนี้ หรือมีคิว CONFIRMED ตั้งแต่วันนี้ขึ้นไป **ข้ามทุกศูนย์**; ชื่อที่ลบแล้วถูกสงวน ใช้ซ้ำไม่ได้ |
 | `POST` | `/v1/staff/admin/time-slots` | เพิ่ม slot — SUPER_ADMIN only; **บังคับ `health_center_id` (422/404)**; ปฏิเสธถ้าทับกับช่วงเวลาเดิมของศูนย์นั้น |
 | `PUT` | `/v1/staff/admin/time-slots/{id}` | แก้ slot — SUPER_ADMIN only; **บังคับ `health_center_id`; slot ต้องเป็นของศูนย์นั้น (ต่าง = 404)**; ส่ง `is_active: false` ตอนสร้างได้ |
 | `DELETE` | `/v1/staff/admin/time-slots/{id}` | **ไม่รองรับการลบช่วงเวลา** — ตอบ 422 ทุกกรณี (ไม่ว่าจะมีนัดหมายหรือไม่) พร้อมชี้ทางเลือก "กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน" |
@@ -370,8 +415,8 @@
 | Operation | Endpoint | ข้อจำกัดเพิ่มเติม |
 |---|---|---|
 | แก้ไขข้อมูลผู้รับบริการ | `PATCH /v1/staff/patients/{id}` | ต้องระบุ `health_center_id`; ผู้รับบริการต้องมีประวัติคิวที่ศูนย์นั้น |
-| ผูกหมอเข้ากับบริการ | `PUT /v1/staff/services/{id}/staff` | ต้องระบุ `health_center_id`; หมอต้องในศูนย์เดียวกันและหมวดหมู่เดียวกับบริการ |
-| ตั้งค่าวันเปิดให้บริการ | `PUT /v1/staff/services/{id}/time-slot-days` | ต้องระบุ `health_center_id`; **ช่วงเวลาที่เลือกต้องเป็นของศูนย์เดียวกับบริการ (ต่าง = 422)** — บังคับทั้งในโค้ดและระดับฐานข้อมูล |
+| เปิดบริการให้ศูนย์ | `POST /v1/staff/health-centers/{id}/services` | ศูนย์มาจากพาธ (ไม่ต้องส่งใน body) จึงต่างจาก write อื่นที่ต้องส่ง `health_center_id`; ต้องตั้งค่าครบ |
+| แก้ค่าตั้ง / ปิดเปิด / เอาออก | `PATCH`·`DELETE /v1/staff/health-center-services/{id}` | `{id}` คือรหัสแถวตั้งค่า ไม่ใช่รหัสบริการ — แตะข้ามศูนย์ได้เพราะแถวนั้นบอกศูนย์เจ้าของอยู่แล้ว; **ช่วงเวลาที่ตั้งต้องเป็นของศูนย์นั้น (ต่าง = 422)** บังคับในโค้ด |
 | แก้ไขข้อมูล ศูนย์สุขภาพ | `PATCH /v1/staff/health-centers/{id}` | แก้ได้ทุกฟิลด์ **รวมถึง `code`**; `health_center_id` ต้องตรงกับ `{id}` |
 
 ### 5.4 สถานะ 3 ระดับของศูนย์สุขภาพ (Open/Close Lifecycle)
@@ -403,12 +448,13 @@
 | ความสามารถ | STAFF | HC_ADMIN | SUPER_ADMIN | Patient |
 |---|:---:|:---:|:---:|:---:|
 | **Dashboard** | ศูนย์ตัวเอง | ศูนย์ตัวเอง | ทุกศูนย์ | — |
-| **Services: ดูรายการ** | ✔ | ✔ | ✔ | ✔ (public) |
-| **Services: เพิ่ม/แก้ไข/toggle** | ✔ | ✔ | ✔ | — |
-| **Services: ลบ** | — | ✔ | ✔ | — |
-| **Services: ผูก Assignees** | ✔ | ✔ | ✔ | — |
-| **Services: ผูก Selectable Staff** | — | ✔ | ✔ | — |
-| **Services: ตั้ง Operating Days** | — | ✔ | ✔ | — |
+| **รายการบริการกลาง: อ่าน** | — | — | ✔ | ✔ (เฉพาะบริการที่ศูนย์ให้จริง) |
+| **รายการบริการกลาง: เพิ่ม/แก้/ลบ** | — | — | ✔ | — |
+| **ค่าตั้งรายศูนย์: อ่าน** | ✔ (ศูนย์ตัวเอง อย่างเดียว) | ✔ (ศูนย์ตัวเอง) | ✔ (ทุกศูนย์) | ✔ (เฉพาะบริการที่ศูนย์เปิด) |
+| **ค่าตั้งรายศูนย์: เปิดบริการ** | — | ✔ (ศูนย์ตัวเอง) | ✔ | — |
+| **ค่าตั้งรายศูนย์: แก้ค่าตั้ง** | — | ✔ (ศูนย์ตัวเอง) | ✔ | — |
+| **ค่าตั้งรายศูนย์: ปิด/เปิด** | — | ✔ (ศูนย์ตัวเอง) | ✔ | — |
+| **ค่าตั้งรายศูนย์: เอาออกจากศูนย์** | — | ✔ (ศูนย์ตัวเอง) | ✔ | — |
 | **Appointments: ดูรายการ** | Assigned services only | ทุกบริการในศูนย์ | ทุกบริการทุกศูนย์ | ของตัวเอง |
 | **นัดหมายเดินเข้ารับบริการ (หน้าเคาน์เตอร์)** | — | ✔ ทุกบริการในศูนย์ | ✔ ทุกบริการทุกศูนย์ | — |
 | **อัปเดตสถานะ / ย้ายคิว / Unmask** | ทุกคิวในศูนย์ | ทุกคิวในศูนย์ | ทุกคิวทุกศูนย์ | ยกเลิกนัดตัวเอง |
@@ -438,14 +484,15 @@
 | 1 | **Data Privacy (PDPA)** — ข้อมูลผู้รับบริการ mask เป็นค่าเริ่มต้น; Unmask/แก้ไขบันทึก Audit Log | Resource/accessor + Controller/Service | ดูตาราง Audit Log ด้านล่าง — **ไม่ใช่ทุก action ที่ mask** |
 | 2 | **Strict Multi-Tenancy** — staff จัดการเฉพาะศูนย์ตัวเอง | Trait `ResolvesHealthCenterScope` (ทุก endpoint) + Service `where(health_center_id)->findOrFail()` + DB `NOT NULL` | SUPER_ADMIN ต้องระบุศูนย์เสมอ — เคยมีข้อยกเว้นที่ช่วงเวลา แก้แล้ว |
 | 3 | **Assigned Services scope** — STAFF เห็นและแตะคิวเฉพาะบริการที่ assign (หรือคิวที่ระบุชื่อเขา) | Controller (`index`) + Controller (`denyIfOutOfScope` — ทุกทางที่แตะคิว) | เดิมจำกัดแค่ `index` ทำให้ `updateStatus`/`unmask` รับเลขนัดหมายที่หน้าจอไม่เคยส่ง → สิ่งที่เห็นกับสิ่งที่ทำได้ไม่ตรงกัน; กติกาเดียวกันนี้ใช้ทั้งสามทางแล้ว และ **หน้าเคาน์เตอร์ไม่ใช่ของ STAFF** (route gate + role) |
-| 4 | **Operating Days Hard Gate** — แต่ละ (service,slot) มี `days_mask` (bit 1-7) | Request validation (book/walk-in) + `OperatingDayService::isSlotAvailableOnDate` | pivot `service_time_slot`; slot ต้อง active; **slot ต้องเป็นของศูนย์เดียวกับบริการ (บังคับทั้งโค้ดและ composite FK)** |
-| 5 | **Capacity & anti-overbooking** — นับ CONFIRMED ลดจากโควตาที่หักวันลาของวันนั้น; เลือกบุคลากร 1 คิว/รอบ/คน | `CapacityService` + `lockForUpdate` ใน transaction | ตอนกดจองส่งวันที่เข้าไปด้วย จึงได้โควตาตรงกับที่หน้าจอแสดง; ย้ายคิวก็ตรวจโควตาในธุรกรรมเดียวกับการบันทึก |
+| 4 | **Operating Days Hard Gate** — แต่ละ (แถวตั้งค่าของศูนย์, ช่วงเวลา) มี `days_mask` (bit 1-7) | Request validation (book/walk-in) + ตัวตรวจวันให้บริการ | pivot `health_center_service_time_slot`; slot ต้อง active; **slot ต้องเป็นของศูนย์เดียวกับแถวตั้งค่า (บังคับในโค้ด)** |
+| 5 | **โควตาและกันจองเกิน** — นับ CONFIRMED ลดจากโควตาของศูนย์นั้นที่หักวันลาแล้ว; เลือกบุคลากร 1 คิว/รอบ/คน | `CapacityService` + `lockForUpdate` ในธุรกรรมเดียว | ตอนกดจองส่งวันที่เข้าไปด้วย จึงได้โควตาตรงกับที่หน้าจอแสดง; ย้ายคิวก็ตรวจโควตาในธุรกรรมเดียวกับการบันทึก |
 | 5b | **เลขคิวคำนวณใหม่เมื่อเลื่อนวัน** — เลขเดิมนับรวมคิวของวันที่ย้ายออกไปแล้ว | `StaffAppointmentService::rescheduleAppointment()` | เก็บเลขเดิมจะชนกับคิวอื่นของวันใหม่; ระบบไม่เก็บประวัติการเลื่อน จึงย้อนกลับไม่ได้ — ใบนัดที่พิมพ์ไปแล้วจะบอกเลขผิด |
-| 6 | **Confirmed-queue guards** — ห้ามลบ/ปิดสิ่งที่กำลังมีคิว (services, staff, time-slot-days, user, leave, duty) | Service + Controller | **ช่วงเวลาไม่ลบเลย** ตาม ADR-0001 ใช้ปิดใช้งานแทน; การลบศูนย์/บริการ/ช่วงเวลาที่มีนัดหมายจะถูก FK `RESTRICT` บล็อก |
+| 6 | **Confirmed-queue guards** — ห้ามลบ/ปิดสิ่งที่กำลังมีคิว (บริการในรายการกลาง, ค่าตั้งรายศูนย์, user, วันลา, เวร) | Service + Controller | เกณฑ์เดียวกันทั้งระบบ: นับเฉพาะ `CONFIRMED` ตั้งแต่วันนี้ขึ้นไป — ปิดบริการของศูนย์และเอาค่าตั้งออก ตรวจเฉพาะคิวของศูนย์นั้น ส่วนการลบบริการออกจากรายการกลางตรวจข้ามทุกศูนย์; **ช่วงเวลาไม่ลบเลย** ตาม ADR-0001 ใช้ปิดใช้งานแทน |
 | 7 | **Health Center Lifecycle** — ACTIVE/CLOSING/INACTIVE + auto-close job | Service (ผู้ดูแลระบบสลับสถานะ) + `CloseHealthCenterJob` | auto-close นับเฉพาะคิวตั้งแต่วันนี้ขึ้นไป คิวของวันที่ผ่านมาไม่นับ |
-| 8 | **Staff Selection** — `allow_staff_selection=true` บังคับ PER_MASSEUSE + selectable staff ≥1; ป้องกันการแกะหมอที่มีคิว | Service `update` + `syncStaff` | เปิด/ปิด + ผูกหมอต้องระดับ admin |
+| 8 | **เปิดให้ผู้รับบริการเลือกบุคลากร** — `allow_staff_selection=true` บังคับ PER_MASSEUSE + ผู้ที่เลือกได้ ≥1 คน; ป้องกันการแกะบุคลากรที่มีคิวค้าง | ตัวตรวจช่อง + ตัวซิงก์รายชื่อที่ศูนย์ | ตอนปิดการเลือกบุคลากรทิ้งไปเลย ยกเว้นการแกะบุคลากรออก — เพราะการเลือกไม่มีผลต่อโควตาอยู่แล้ว |
+| 8b | **ศูนย์ให้บริการได้ต่อเมื่อตั้งค่าครบ** — ขาดข้อใดข้อหนึ่ง = ปฏิเสธพร้อมรายการที่ขาดทั้งหมด | ตัวตรวจความครบของแถวตั้งค่า (ที่เดียว) | ถูกบังคับใช้ทุกทางที่ทำให้บริการถูกเปิด — เปิดใหม่, สลับกลับมาเปิด และแก้ค่าตั้งของแถวที่เปิดอยู่ — ไม่ใช่ตอนกรอกฟอร์ม |
 | 9 | **การป้องกันผู้ดูแลระบบคนสุดท้าย** — ห้ามลบ/ปิด SUPER_ADMIN คนสุดท้ายที่ ACTIVE | `StaffUserManagementController` + `isLastActiveSuperAdmin` | |
-| 10 | **Audit Trail** — 12 actions รายละเอียดด้านล่าง | Service/Controller/Job | |
+| 10 | **Audit Trail** — 16 actions รายละเอียดด้านล่าง | Service/Controller/Job | |
 | 11 | **สิทธิการรักษาต้องเป็นของผู้รับบริการคนนั้น** — ส่ง `patient_right_id` ที่หาไม่เจอ → 422 | `BookingService::resolvePatientRight()` | เดิมเงียบแล้วสร้างนัดหมายที่ไม่มีสิทธิผูกไว้; ไม่ส่งเลยใช้สิทธิหลัก ถ้าไม่มีสิทธิเลยก็จองได้ |
 
 ### 7.1 ตาราง Audit Log (action + ข้อมูลที่เก็บ/mask ตามจริง)
@@ -459,9 +506,12 @@
 | `UPDATE_HEALTH_CENTER_STATUS` | toggle สถานะศูนย์ | `from, to` | — |
 | `AUTO_CLOSE_HEALTH_CENTER` | auto-close job | `from=CLOSING, to=INACTIVE` (user_id=null) | — |
 | `APPOINTMENT_STAFF_REASSIGN` | ย้ายคิวไปบุคลากรคนอื่น | `before_staff_id, after_staff_id` | — |
-| `SERVICE_SELECTABLE_STAFF_SYNC` | ผูกบุคลากรที่เลือกได้ | `before, after` (staff id arrays) | — |
+| `SERVICE_CENTER_ACTIVATE` | เปิดบริการจากรายการกลางให้ศูนย์หนึ่งแห่ง พร้อมตั้งค่าครบ | `to` = ค่าตั้งทั้งหมดหลังเปิด (สถานะ วิธีนับโควตา สวิตช์ ผู้รับผิดชอบ ผู้ที่เลือกได้ ช่วงเวลา+วัน) | — |
+| `SERVICE_CENTER_CONFIG_UPDATE` | แก้ค่าตั้งของแถวที่ศูนย์เปิดไว้ | `from`, `to` = ค่าตั้งก่อนและหลัง | — |
+| `SERVICE_CENTER_TOGGLE_STATUS` | สลับเปิด/ปิดบริการของศูนย์ | `from`, `to` = สถานะก่อนและหลัง | — |
+| `SERVICE_CENTER_REMOVE` | เอาบริการออกจากศูนย์ (ค่าตั้งหาย) | `from` = ค่าตั้งก่อน, `to` = null | — |
 | `LOOKUP_PATIENT_BY_CID` | ค้นผู้รับบริการด้วยเลขบัตรประชาชน **แล้วพบ** | `searched_cid`, `scope` (`OWN_CENTER`/`CROSS_CENTER`) | cid mask; ค้นแล้วไม่พบไม่เขียน |
-| `SERVICE_TIME_SLOT_DAYS_SYNC` | ตั้ง operating days | `before, after` (slot + days) | — |
+| `UPDATE_DISCORD_WEBHOOK` | ตั้งหรือยกเลิกการแจ้งเตือนของศูนย์ | `set` = ตั้งใหม่หรือลบ | **ไม่เก็บ URL เด็ดขาด** — เว็บฮุกเป็นค่าลับ |
 | `USER_CREATED` | สร้าง user | `username, name, health_center_id, role_ids` | **ไม่ mask** |
 | `USER_UPDATED` | แก้ user | `before/after: name, status, role_ids` | **ไม่ mask** |
 | `USER_DELETED` | ลบ user | `username, name, health_center_id, staff_ids` | **ไม่ mask** |
@@ -482,11 +532,15 @@
 | POST | `/v1/staff/logout` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | GET | `/v1/staff/dashboard/summary` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | GET | `/v1/staff/dashboard/bundle` | STAFF,HC_ADMIN,SUPER_ADMIN |
-| GET | `/v1/staff/services` | STAFF,HC_ADMIN,SUPER_ADMIN |
-| POST | `/v1/staff/services` | STAFF,HC_ADMIN,SUPER_ADMIN |
-| PUT | `/v1/staff/services/{id}` | STAFF,HC_ADMIN,SUPER_ADMIN |
-| PATCH | `/v1/staff/services/{id}/toggle-status` | STAFF,HC_ADMIN,SUPER_ADMIN |
-| DELETE | `/v1/staff/services/{id}` | STAFF,HC_ADMIN,SUPER_ADMIN (controller gate: HC_ADMIN+SUPER_ADMIN) |
+| GET | `/v1/staff/admin/services` | SUPER_ADMIN |
+| POST | `/v1/staff/admin/services` | SUPER_ADMIN |
+| PUT | `/v1/staff/admin/services/{id}` | SUPER_ADMIN |
+| DELETE | `/v1/staff/admin/services/{id}` | SUPER_ADMIN |
+| GET | `/v1/staff/health-centers/{id}/services` | STAFF,HC_ADMIN,SUPER_ADMIN (STAFF เห็นศูนย์ตัวเองเท่านั้น) |
+| POST | `/v1/staff/health-centers/{id}/services` | SUPER_ADMIN,HC_ADMIN |
+| PATCH | `/v1/staff/health-center-services/{id}` | SUPER_ADMIN,HC_ADMIN |
+| PATCH | `/v1/staff/health-center-services/{id}/toggle-status` | SUPER_ADMIN,HC_ADMIN |
+| DELETE | `/v1/staff/health-center-services/{id}` | SUPER_ADMIN,HC_ADMIN |
 | GET | `/v1/staff/appointments` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | POST | `/v1/staff/appointments/walk-in` | **HC_ADMIN,SUPER_ADMIN** |
 | PATCH | `/v1/staff/appointments/{id}/status` | STAFF,HC_ADMIN,SUPER_ADMIN |
@@ -497,7 +551,6 @@
 | POST | `/v1/staff/roster` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | PATCH | `/v1/staff/roster/{id}/toggle-duty` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | PATCH | `/v1/staff/patients/{id}/contact` | STAFF,HC_ADMIN,SUPER_ADMIN |
-| PUT | `/v1/staff/services/{id}/assignees` | SUPER_ADMIN,HC_ADMIN |
 | GET | `/v1/staff/leaves` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | POST | `/v1/staff/leaves` | STAFF,HC_ADMIN,SUPER_ADMIN |
 | DELETE | `/v1/staff/leaves/{id}` | STAFF,HC_ADMIN,SUPER_ADMIN |
@@ -519,8 +572,6 @@
 | GET | `/v1/staff/admin/patients` | SUPER_ADMIN,HC_ADMIN |
 | PATCH | `/v1/staff/health-centers/{id}` | SUPER_ADMIN,HC_ADMIN |
 | GET | `/v1/staff/health-centers` | STAFF,HC_ADMIN,SUPER_ADMIN |
-| PUT | `/v1/staff/services/{id}/time-slot-days` | SUPER_ADMIN,HC_ADMIN |
-| PUT | `/v1/staff/services/{id}/staff` | SUPER_ADMIN,HC_ADMIN |
 
 ### 8.2 Patient
 
