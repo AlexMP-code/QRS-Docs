@@ -1119,6 +1119,10 @@ paths:
         - ผู้ดูแลศูนย์แก้ได้เฉพาะแถวของศูนย์ตัวเอง (ต่าง → 403)
         - แถวที่เปิดอยู่ต้องยังให้บริการได้จริงหลังแก้ ค่าที่ขาดจะถูกปฏิเสธ
         - แถวที่ปิดอยู่เก็บค่าตั้งค้างไว้ได้
+        - การแกะบุคลากรออกจากรายชื่อที่เลือกได้ **ตรวจคิวค้างเฉพาะตอนสวิตช์เป็น `false`**
+          (เป็น `false` อยู่แล้ว หรือกำลังส่ง `allow_staff_selection: false` มากับคำขอนี้) — 422
+        - ⚠️ ถ้าสวิตช์ยังเป็น `true` ระบบ**ไม่ตรวจ** แกะบุคลากรที่มีคิวค้างได้
+          เป็นช่องโหว่ของกติกา ต้องแก้ที่โค้ด (ดู openapi.yaml รายละเอียด)
         - เขียน Audit Log (SERVICE_CENTER_CONFIG_UPDATE)
       operationId: staffUpdateCenterServiceConfig
       requestBody:
@@ -3204,21 +3208,6 @@ components:
           type: string
           enum: [ACTIVE, INACTIVE, LEAVE]
 
-    SelectableStaffWithStatus:
-      type: object
-      description: หมอ/เจ้าหน้าที่ที่เลือกได้ พร้อมสถานะ (ใน ServiceResource.selectable_staff)
-      properties:
-        id:
-          type: integer
-        name:
-          type: string
-        position:
-          type: string
-          nullable: true
-        status:
-          type: string
-          enum: [ACTIVE, INACTIVE, LEAVE]
-
     StaffSummary:
       type: object
       properties:
@@ -3626,9 +3615,10 @@ components:
         ไม่เหลือแถวตั้งค่าค้างไว้ และข้อความจะระบุรายการที่ขาดทั้งหมดพร้อมกัน:
         1. `capacity_type` — วิธีนับโควตา
         2. โควตาตัวเลข ถ้าวิธีที่เลือกต้องใช้ — `max_per_slot` เมื่อ PER_SLOT, `max_per_day` เมื่อ PER_DAY
-        3. ถ้าเปิด `allow_staff_selection` ต้องเป็น PER_MASSEUSE และมี `selectable_staff_ids` อย่างน้อย 1 คน
-        4. `time_slots` อย่างน้อย 1 ช่วง และแต่ละช่วงต้องมีวันอย่างน้อย 1 วัน
-        5. `assignee_ids` อย่างน้อย 1 คน — ผู้รับผิดชอบบริการของศูนย์นี้
+        3. ถ้าเปิด `allow_staff_selection` ต้องเป็น PER_MASSEUSE
+        4. ถ้าเปิด `allow_staff_selection` ต้องมี `selectable_staff_ids` อย่างน้อย 1 คน
+        5. `time_slots` อย่างน้อย 1 ช่วง และแต่ละช่วงต้องมีวันอย่างน้อย 1 วัน
+        6. `assignee_ids` อย่างน้อย 1 คน — ผู้รับผิดชอบบริการของศูนย์นี้
       properties:
         service_id:
           type: integer
