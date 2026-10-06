@@ -1508,8 +1508,12 @@ paths:
         - แถวที่**เปิดอยู่**ต้องยังให้บริการได้จริงหลังแก้ ค่าที่ขาดจะถูกปฏิเสธ
           พร้อมรายการที่ขาดทั้งหมด
         - แถวที่**ปิดอยู่**เก็บค่าตั้งค้างไว้ได้ เพื่อเปิดใหม่วันหลัง
-        - แกะบุคลากรออกจากรายชื่อที่เลือกได้ ต้องไม่ทิ้งคิวค้างของเขาไว้
-          (ยกเว้นตอนปิดการเลือกบุคลากรทิ้งไปเลย)
+        - การแกะบุคลากรออกจากรายชื่อที่เลือกได้ **ตรวจคิวค้างเฉพาะตอนสวิตช์เป็น `false`**
+          (เป็น `false` อยู่แล้ว หรือกำลังส่ง `allow_staff_selection: false` มากับคำขอนี้)
+          — 422 และคำขอทั้งคำขอไม่ถูกเขียน
+        - ⚠️ ถ้าสวิตช์ยังเป็น `true` ระบบ**ไม่ตรวจ**คิวค้างของคนที่ถูกแกะ
+          แกะบุคลากรที่ยังมีนัดหมายรอได้ และนัดหมายยังผูกกับเขาอยู่
+          เป็นช่องโหว่ของกติกา ต้องแก้ที่โค้ด
         - ทุกครั้งที่แก้ไข ระบบเขียน Audit Log (`SERVICE_CENTER_CONFIG_UPDATE`)
           เก็บค่าก่อนและหลัง
       operationId: staffUpdateCenterServiceConfig
@@ -3439,21 +3443,6 @@ components:
           type: string
           enum: [ACTIVE, INACTIVE, LEAVE]
 
-    SelectableStaffWithStatus:
-      type: object
-      description: หมอ/เจ้าหน้าที่ที่เลือกได้ พร้อมสถานะ (ใน ServiceResource.selectable_staff)
-      properties:
-        id:
-          type: integer
-        name:
-          type: string
-        position:
-          type: string
-          nullable: true
-        status:
-          type: string
-          enum: [ACTIVE, INACTIVE, LEAVE]
-
     StaffSummary:
       type: object
       properties:
@@ -3884,9 +3873,10 @@ components:
         ไม่เหลือแถวตั้งค่าค้างไว้ และข้อความจะระบุรายการที่ขาดทั้งหมดพร้อมกัน:
         1. `capacity_type` — วิธีนับโควตา
         2. โควตาตัวเลข ถ้าวิธีที่เลือกต้องใช้ — `max_per_slot` เมื่อ PER_SLOT, `max_per_day` เมื่อ PER_DAY
-        3. ถ้าเปิด `allow_staff_selection` ต้องเป็น PER_MASSEUSE และมี `selectable_staff_ids` อย่างน้อย 1 คน
-        4. `time_slots` อย่างน้อย 1 ช่วง และแต่ละช่วงต้องมีวันอย่างน้อย 1 วัน
-        5. `assignee_ids` อย่างน้อย 1 คน — ผู้รับผิดชอบบริการของศูนย์นี้
+        3. ถ้าเปิด `allow_staff_selection` ต้องเป็น PER_MASSEUSE
+        4. ถ้าเปิด `allow_staff_selection` ต้องมี `selectable_staff_ids` อย่างน้อย 1 คน
+        5. `time_slots` อย่างน้อย 1 ช่วง และแต่ละช่วงต้องมีวันอย่างน้อย 1 วัน
+        6. `assignee_ids` อย่างน้อย 1 คน — ผู้รับผิดชอบบริการของศูนย์นี้
       properties:
         service_id:
           type: integer
