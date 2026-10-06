@@ -11,6 +11,7 @@ info:
 
     ## Role-Based Access
     - `SUPER_ADMIN` (role_id=1) — ผู้ดูแลระบบระดับจังหวัด จัดการทุกอย่างทุก ศูนย์สุขภาพ (cross-tenant)
+      รวมถึงดูแลรายการบริการกลาง ซึ่งเป็นของทั้งจังหวัด ไม่สังกัดศูนย์ใดศูนย์หนึ่ง
     - `HEALTH_CENTER_ADMIN` (role_id=2) — ผู้ดูแล ศูนย์สุขภาพ จัดการข้อมูลของตัวเอง
     - `STAFF` (role_id=3) — เจ้าหน้าที่ห้องตรวจ จัดการคิว/นัดของตัวเอง
     - `patient` — ประชาชน / ผู้รับบริการ
@@ -56,15 +57,17 @@ tags:
   - name: HEALTH_CENTER_ADMIN
     x-roles: [SUPER_ADMIN, HEALTH_CENTER_ADMIN]
     description: |
-      จัดการข้อมูลศูนย์ — CRUD บริการ, มอบหมายเจ้าหน้าที่, จัดการเวร,
-      ลงวันลาลูกน้อง, จัดการผู้ใช้ (SUPER_ADMIN ต้องระบุ health_center_id),
-      ดูช่วงเวลาให้บริการ (Time Slots), ผูกหมอที่เลือกได้กับบริการ
-      และเปิด/ปิดให้ผู้รับบริการเลือกหมอ (allow_staff_selection)
-      รวมถึงย้ายคิวไปหมอคนอื่น (reassign-staff)
+      จัดการข้อมูลศูนย์ — **ค่าตั้งบริการรายศูนย์** (เปิดให้บริการ แก้ค่าตั้ง ปิด/เปิด เอาออก),
+      อ่านรายการบริการของศูนย์ตัวเอง (เจ้าหน้าที่ปฏิบัติงานอ่านได้อย่างเดียว),
+      มอบหมายเจ้าหน้าที่, จัดการเวร, ลงวันลาลูกน้อง, จัดการผู้ใช้
+      (SUPER_ADMIN ต้องระบุ health_center_id), ดูช่วงเวลาให้บริการ (Time Slots),
+      ย้ายคิวไปบุคลากรคนอื่น (reassign-staff)
+      > บริการในรายการกลางสร้าง แก้ และลบได้ผู้ดูแลระบบเท่านั้น (ดู tag SUPER_ADMIN)
   - name: SUPER_ADMIN
     x-roles: [SUPER_ADMIN]
     description: |
-      ข้ามศูนย์ — ตั้งค่า Discord Webhook, จัดการช่วงเวลาให้บริการ (CRUD Time Slots)
+      ข้ามศูนย์ — **รายการบริการกลาง (สร้าง/แก้/ลบ ที่ /v1/staff/admin/services)**,
+      ตั้งค่า Discord Webhook, จัดการช่วงเวลาให้บริการ (CRUD Time Slots)
   - name: STAFF
     x-roles: [STAFF]
     description: |
@@ -345,7 +348,13 @@ paths:
   /v1/patient/health-centers/{id}/services:
     get:
       tags: [Public]
-      summary: บริการทั้งหมดของ ศูนย์สุขภาพ (dropdown เลือกบริการ)
+      summary: บริการที่ศูนย์นี้ให้บริการจริง (dropdown เลือกบริการ)
+      description: |
+        ระบบส่งเฉพาะบริการที่ผ่านเงื่อนไขพร้อมกัน:
+        ศูนย์เปิดบริการนั้นอยู่ · ศูนย์มีช่วงเวลาเปิดอย่างน้อยหนึ่งช่วง
+        และหมวดหมู่ของบริการยังเปิดใช้งานอยู่
+        ศูนย์ที่ปิดสมบูรณ์ → 404
+        ค่าของศูนย์ไม่ได้อยู่แบนรวมกับบริการ แต่อยู่ใต้คีย์ `center_service`
       operationId: patientGetCenterServices
       parameters:
         - name: id
@@ -370,7 +379,7 @@ paths:
                         description: สถานะปัจจุบันของศูนย์ (ACTIVE = เปิดรับจอง / CLOSING = กำลังปิด — ยังเห็นบริการได้)
                       data:
                         type: array
-                        description: บริการฉบับย่อ (projection ของ Service — ไม่มี is_active/assigned_staff)
+                        description: บริการที่ศูนย์นี้เปิดอยู่จริง พร้อมค่าของศูนย์ใต้คีย์ center_service
                         items:
                           $ref: "#/components/schemas/PatientServiceBrief"
         "404":
@@ -610,22 +619,23 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
-  /v1/staff/services:
+  /v1/staff/admin/services:
     get:
-      tags: [Staff (ทุกบทบาท)]
-      summary: รายการบริการทั้งหมดของ ศูนย์สุขภาพ
+      tags: [SUPER_ADMIN]
+      summary: รายการบริการในรายการกลาง
       description: |
-        ถ้าระบุ date → ซ่อนบริการที่ไม่มี staff ว่างวันนั้น
-        (staff-selection → หมอที่เลือกได้ลาทั้งหมด; ปกติ → staff มอบหมายลาทั้งหมด)
-      operationId: staffListServices
+        บริการเป็นของทั้งจังหวัด ไม่สังกัดศูนย์ — ศูนย์หนึ่งแห่งจะเปิดบริการไหนได้
+        ขึ้นกับแถวตั้งค่าของศูนย์นั้น ไม่ใช่บริการนี้
+        - ไม่ระบุ `health_center_id` → ทั้งรายการกลาง และแต่ละรายการมีแต่ `centers[]` ว่าศูนย์ไหนเปิดอยู่
+        - ระบุ `health_center_id` → เฉพาะบริการที่ศูนย์นั้นมีแถวตั้งค่า
+          และค่าของศูนย์ถูกทับลงรายการนั้น (config_id, is_configured, is_active, capacity_type,
+          allow_staff_selection, max_per_slot, max_per_day, time_slots, assigned_staff, selectable_staff)
+        - ระบุศูนย์ที่ไม่มีอยู่จริง → **404** ไม่ใช่รายการว่าง
+          เพราะรายการว่างจะถูกอ่านว่า "ศูนย์นี้ไม่มีบริการ" ทั้งที่จริงคือพิมพ์ผิด
+        - `centers[].is_configured` บอกว่าศูนย์นั้นตั้งค่าครบจนเปิดให้บริการได้หรือยัง
+      operationId: adminListServices
       parameters:
         - $ref: "#/components/parameters/HealthCenterIdFilter"
-        - name: date
-          in: query
-          schema:
-            type: string
-            format: date
-          description: วันที่ต้องการตรวจ (ซ่อนบริการที่ไม่มี staff ว่างวันนั้น)
       responses:
         "200":
           description: OK
@@ -639,20 +649,37 @@ paths:
                       data:
                         type: array
                         items:
-                          $ref: "#/components/schemas/Service"
+                          $ref: "#/components/schemas/CatalogService"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: ไม่พบศูนย์สุขภาพที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: health_center_id ไม่ใช่ตัวเลข
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
     post:
-      tags: [Staff (ทุกบทบาท)]
-      summary: เพิ่มบริการใหม่
-      operationId: staffCreateService
+      tags: [SUPER_ADMIN]
+      summary: เพิ่มบริการเข้ารายการกลาง
+      description: |
+        สร้างได้เฉพาะตัวบริการคือหมวดหมู่ ชื่อ และคำอธิบาย
+        โควตา ช่วงเวลา ผู้รับผิดชอบ และบุคลากรที่ผู้รับบริการเลือกได้ เป็นค่าของศูนย์
+        จึงตั้งตอนเปิดบริการให้ศูนย์หนึ่งแห่ง ไม่ใช่ตอนสร้างบริการ
+        - ชื่อต้องไม่ซ้ำทั้งระบบ และนับแถวที่ลบออกจากรายการกลางไปแล้วด้วย (422)
+      operationId: adminCreateService
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateServiceRequest"
+              $ref: "#/components/schemas/StoreCatalogServiceRequest"
       responses:
         "201":
           description: สร้างสำเร็จ
@@ -665,13 +692,14 @@ paths:
                     properties:
                       message:
                         type: string
-                        example: "เพิ่มบริการสำเร็จ"
+                        example: "เพิ่มบริการในรายการกลางสำเร็จ"
                       data:
                         $ref: "#/components/schemas/Service"
-        "422":
-          $ref: "#/components/responses/ValidationError"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
 
   /v1/staff/appointments:
     get:
@@ -1289,27 +1317,28 @@ paths:
   #  HEALTH_CENTER_ADMIN — จัดการข้อมูลศูนย์ (+ SUPER_ADMIN)
   # ══════════════════════════════════════════════════════════
 
-  /v1/staff/services/{id}:
+  # ══════════════════════════════════════════════════════════
+  #  HEALTH_CENTER_ADMIN — ค่าตั้งบริการรายศูนย์ (+ SUPER_ADMIN ข้ามศูนย์)
+  # ══════════════════════════════════════════════════════════
+
+  /v1/staff/admin/services/{id}:
     parameters:
       - $ref: "#/components/parameters/ServiceId"
 
     put:
-      tags: [Staff (ทุกบทบาท)]
-      summary: แก้ไขข้อมูลบริการ
+      tags: [SUPER_ADMIN]
+      summary: แก้ไขบริการในรายการกลาง
       description: |
-        ใช้แก้ไขชื่อ/หมวดหมู่/คำอธิบาย/ราคา/ระยะเวลา/เตือน/สถานะ
-        และเปิด-ปิด allow_staff_selection
-        - ถ้า allow_staff_selection = true ต้องมี selectable staff ที่ ACTIVE
-          อย่างน้อย 1 คน (ที่ผูกผ่าน PUT /v1/staff/services/{id}/staff)
-        - ถ้าเปลี่ยนจาก true → false แต่มีคิวที่เลือกหมอไว้แล้วจะถูกกันไว้ (block)
-        STAFF: แก้ไขได้เฉพาะบริการในศูนย์ตัวเอง
-      operationId: staffUpdateService
+        แก้ได้เฉพาะหมวดหมู่ ชื่อ และคำอธิบาย — ส่งเฉพาะช่องที่ต้องการเปลี่ยน
+        ค่าที่เป็นของศูนย์ (โควตา วันให้บริการ ผู้รับผิดชอบ บุคลากรที่เลือกได้) แก้ที่นี่ไม่ได้
+        ชื่อซ้ำทั้งระบบ (รวมชื่อที่เคยลบออกไปแล้ว) → 422
+      operationId: adminUpdateService
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateServiceRequest"
+              $ref: "#/components/schemas/UpdateCatalogServiceRequest"
       responses:
         "200":
           description: OK
@@ -1322,30 +1351,74 @@ paths:
                     properties:
                       message:
                         type: string
-                        example: "แก้ไขข้อมูลบริการสำเร็จ"
+                        example: "แก้ไขข้อมูลบริการในรายการกลางสำเร็จ"
                       data:
                         $ref: "#/components/schemas/Service"
-        "422":
-          $ref: "#/components/responses/ValidationError"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
     delete:
-      tags: [HEALTH_CENTER_ADMIN, SUPER_ADMIN]
-      summary: ลบบริการ (Soft Delete)
+      tags: [SUPER_ADMIN]
+      summary: ลบบริการออกจากรายการกลาง (Soft Delete)
       description: |
-        ลบได้เฉพาะบริการที่ไม่มีคิวสถานะ CONFIRMED ตั้งแต่วันนี้เป็นต้นไป
-        (ถ้ามี → 422 "ไม่สามารถลบบริการได้ เนื่องจากมีคิวล่วงหน้าอยู่ N คิว")
-        เฉพาะ HEALTH_CENTER_ADMIN / SUPER_ADMIN เท่านั้น (STAFF → 403 "ไม่มีสิทธิ์ลบบริการ")
-        SUPER_ADMIN: ต้องระบุ health_center_id (query param)
-      operationId: staffDeleteService
+        - ลบได้ต่อเมื่อ **ไม่มีศูนย์ไหนเปิดบริการนี้ไว้** แม้จะปิดบริการแล้วก็ตาม
+          เพราะแถวตั้งค่ายังอยู่ → 422 "ไม่สามารถลบบริการได้ เนื่องจากมีศูนย์สุขภาพกำลังใช้บริการนี้อยู่
+          กรุณาให้ศูนย์สุขภาพเลิกใช้ก่อน"
+        - ต้องไม่มีคิว CONFIRMED ตั้งแต่วันนี้ขึ้นไป **ข้ามทุกศูนย์** (นับรวมกันทั้งจังหวัด)
+        - soft delete — หายจากรายการกลางและจากรายการบริการของทุกศูนย์ทันที
+          ประวัติการจองเดิมยังอ้างถึงบริการนี้ได้
+        - ชื่อที่ลบแล้วถูกสงวนไว้ ใช้ซ้ำไม่ได้
+      operationId: adminDeleteService
+      responses:
+        "204":
+          description: ลบสำเร็จ (ไม่มีเนื้อหาในคำตอบ)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: ยังมีศูนย์ใช้บริการนี้อยู่ หรือมีคิวยืนยันในอนาคต
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/staff/health-centers/{id}/services:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Health Center ID
+
+    get:
+      tags: [Staff (ทุกบทบาท)]
+      summary: รายการบริการของศูนย์หนึ่งแห่ง พร้อมค่าตั้งของศูนย์
+      description: |
+        คืนรายการกลางทั้งหมด ทับด้วยค่าตั้งของศูนย์นี้
+        บริการที่ศูนย์นี้ยังไม่ได้ตั้งค่าจะ**ไม่มี**คีย์ค่าของศูนย์ ซึ่งถูกต้อง
+        เพราะผู้ดูแลศูนย์ต้องเห็นบริการที่ยังเลือกเปิดได้
+        - เจ้าหน้าที่ปฏิบัติงานอ่านได้เฉพาะศูนย์ของตนเสมอ
+          ไม่ใช่ศูนย์ที่ระบุในพาธ (ต่างกัน → 403) พาธมีไว้ยืนยันว่าไม่ได้ขอศูนย์อื่น
+        - ผู้ดูแลระบบยึดศูนย์จากพาธ จึงอ่านข้ามศูนย์ได้
+        - ระบุ `date` → เหลือเฉพาะบริการที่ศูนย์เปิดอยู่ **และ** มีช่วงเวลาเปิดในวันนั้น
+          อย่างน้อยหนึ่งช่วง รูปแบบวันที่ผิด → 422
+        - `assigned_staff` และ `selectable_staff` คืนชื่อบุคลากรพร้อมกัน
+          หน้าจอจึงแสดงได้ว่าใครอยู่เวรโดยไม่ต้องเรียกอีก endpoint
+      operationId: staffListCenterServices
       parameters:
-        - name: health_center_id
+        - name: date
           in: query
           required: false
           schema:
-            type: integer
-          description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
+            type: string
+            format: date
+          description: ถ้าระบุ จะเหลือเฉพาะบริการที่ศูนย์ให้บริการได้จริงในวันนั้น
       responses:
         "200":
           description: OK
@@ -1356,45 +1429,96 @@ paths:
                   - $ref: "#/components/schemas/SuccessResponse"
                   - type: object
                     properties:
-                      message:
-                        type: string
-                        example: "ลบบริการเรียบร้อยแล้ว"
-        "403":
-          description: STAFF ไม่มีสิทธิ์ลบบริการ
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: มีคิวล่วงหน้าอยู่
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CenterService"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: รูปแบบวันที่ไม่ถูกต้อง
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
-  /v1/staff/services/{id}/toggle-status:
+    post:
+      tags: [HEALTH_CENTER_ADMIN]
+      summary: เปิดบริการในรายการกลางให้ศูนย์นี้ พร้อมตั้งค่าให้ครบ
+      description: |
+        ศูนย์เลือกจากรายการกลางว่าจะเปิดบริการไหน แล้วตั้งค่าให้ครบในคำขอเดียว
+        ศูนย์หนึ่งเปิดบริการนี้ไว้แล้วจะเปิดซ้ำไม่ได้ ให้ใช้ปุ่มเปิด/ปิดแทน
+        - ผู้ดูแลศูนย์เปิดได้เฉพาะศูนย์ตัวเอง (ต่างจากพาธ → 403)
+        - ผู้ดูแลระบบยึดศูนย์จากพาธ
+        - ถ้าตั้งค่าไม่ครบจริงจะไม่เหลือแถวค้าง และข้อความปฏิเสธจะระบุรายการที่ขาด
+          **ทั้งหมดพร้อมกัน** ไม่ใช่ทีละช่อง
+        - ถ้าเปิดให้ผู้รับบริการเลือกบุคลากร ต้องนับโควตาตามบุคลากร
+          และต้องส่ง selectable_staff_ids มาอย่างน้อย 1 คน
+        - ทุกครั้งที่เปิด ระบบเขียน Audit Log (`SERVICE_CENTER_ACTIVATE`)
+      operationId: staffActivateCenterService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivateCenterServiceRequest"
+      responses:
+        "201":
+          description: เปิดให้บริการแล้ว
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "เปิดบริการของศูนย์สุขภาพนี้แล้ว"
+                      data:
+                        $ref: "#/components/schemas/HealthCenterService"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: ตั้งค่าไม่ครบ หรือชนกติการะหว่างช่อง — ข้อความระบุรายการที่ขาดทั้งหมด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/staff/health-center-services/{id}:
     parameters:
-      - $ref: "#/components/parameters/ServiceId"
+      - $ref: "#/components/parameters/CenterServiceConfigId"
 
     patch:
-      tags: [Staff (ทุกบทบาท)]
-      summary: เปิด/ปิดสถานะบริการ
-      operationId: staffToggleServiceStatus
+      tags: [HEALTH_CENTER_ADMIN]
+      summary: แก้ไขค่าตั้งของบริการที่ศูนย์เปิดไว้
       description: |
-        สลับ is_active ของบริการ
-        STAFF: เปิด/ปิดได้เฉพาะบริการในศูนย์ตัวเอง
-        SUPER_ADMIN: ต้องระบุ health_center_id ใน body
+        `id` ในพาธคือ **แถวตั้งค่าของศูนย์** ไม่ใช่รหัสบริการในรายการกลาง
+        ส่งเฉพาะช่องที่ต้องการเปลี่ยน
+        - ผู้ดูแลศูนย์แก้ได้เฉพาะแถวของศูนย์ตัวเอง (ต่าง → 403) · ผู้ดูแลระบบแก้ได้ทุกศูนย์
+        - แถวที่**เปิดอยู่**ต้องยังให้บริการได้จริงหลังแก้ ค่าที่ขาดจะถูกปฏิเสธ
+          พร้อมรายการที่ขาดทั้งหมด
+        - แถวที่**ปิดอยู่**เก็บค่าตั้งค้างไว้ได้ เพื่อเปิดใหม่วันหลัง
+        - แกะบุคลากรออกจากรายชื่อที่เลือกได้ ต้องไม่ทิ้งคิวค้างของเขาไว้
+          (ยกเว้นตอนปิดการเลือกบุคลากรทิ้งไปเลย)
+        - ทุกครั้งที่แก้ไข ระบบเขียน Audit Log (`SERVICE_CENTER_CONFIG_UPDATE`)
+          เก็บค่าก่อนและหลัง
+      operationId: staffUpdateCenterServiceConfig
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                health_center_id:
-                  type: integer
-                  description: จำเป็นสำหรับ SUPER_ADMIN เท่านั้น (คนอื่นไม่ต้องส่ง — ระบบใช้ศูนย์ตัวเอง)
+              $ref: "#/components/schemas/UpdateCenterServiceConfigRequest"
       responses:
         "200":
           description: OK
@@ -1407,141 +1531,109 @@ paths:
                     properties:
                       message:
                         type: string
-                        example: "ปรับปรุงสถานะบริการสำเร็จ"
+                        example: "แก้ไขค่าตั้งบริการสำเร็จ"
+                      data:
+                        $ref: "#/components/schemas/HealthCenterService"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: ตั้งค่าไม่ครบ หรือชนกติการะหว่างช่อง
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags: [HEALTH_CENTER_ADMIN]
+      summary: เอาบริการออกจากศูนย์นี้ (ค่าตั้งหายไป)
+      description: |
+        `id` ในพาธคือแถวตั้งค่าของศูนย์
+        - ต้องไม่มีคิวค้างของบริการนั้นในศูนย์นี้ (422)
+        - ต่างจากการ **ปิด**: ค่าตั้งหายไปด้วย (โควตา วันให้บริการ ผู้รับผิดชอบ
+          บุคลากรที่ผู้รับบริการเลือกได้) เปิดใหม่ต้องกรอกให้ครบอีกครั้ง
+          การปิดแทนคงค่าตั้งไว้ เปิดคืนแล้วใช้ค่าเดิมได้ทันที
+        - บริการในรายการกลางยังอยู่เสมอ ไม่ได้ถูกลบ
+        - ทุกครั้งที่เอาออก ระบบเขียน Audit Log (`SERVICE_CENTER_REMOVE`)
+      operationId: staffRemoveCenterService
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ลบบริการออกจากศูนย์สุขภาพนี้แล้ว"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: ยังมีคิวค้างของบริการนั้นในศูนย์นี้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/staff/health-center-services/{id}/toggle-status:
+    parameters:
+      - $ref: "#/components/parameters/CenterServiceConfigId"
+
+    patch:
+      tags: [HEALTH_CENTER_ADMIN]
+      summary: เปิด/ปิดบริการของศูนย์ (ค่าตั้งยังอยู่)
+      description: |
+        `id` ในพาธคือแถวตั้งค่าของศูนย์
+        - **เปิด** → ต้องตั้งค่าครบ ไม่งั้นปฏิเสธพร้อมรายการที่ขาดทั้งหมด
+          กติกานี้ถูกบังคับตรงนี้ ไม่ใช่ตอนกรอกฟอร์ม
+          ค่าตั้งที่ทำค้างไว้แล้วกลับมาเปิดอีกครั้ง ต้องผ่านเงื่อนไขเดียวกับการเปิดครั้งแรก
+        - **ปิด** → ต้องไม่มีคิวค้างของบริการนั้นในศูนย์นี้
+          เพราะการปิดจะทำให้ผู้รับบริการที่จองไว้ถูกทิ้งเงียบ ๆ (422)
+        - ค่าตั้งเดิมยังอยู่ทั้งหมด — เปิดคืนแล้วใช้ค่าเดิมได้ทันที
+        - ทุกครั้งที่สลับ ระบบเขียน Audit Log (`SERVICE_CENTER_TOGGLE_STATUS`)
+      operationId: staffToggleCenterServiceStatus
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "เปิดบริการแล้ว"
                       is_active:
                         type: boolean
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/staff/services/{id}/assignees:
-    parameters:
-      - $ref: "#/components/parameters/ServiceId"
-
-    put:
-      tags: [HEALTH_CENTER_ADMIN]
-      summary: มอบหมาย/ถอดเจ้าหน้าที่ดูแลบริการ
-      description: |
-        เฉพาะ HC_ADMIN / SUPER_ADMIN (STAFF → 403)
-        HC_ADMIN: กำหนดเฉพาะศูนย์ตัวเอง / STAFF role เท่านั้น
-        SUPER_ADMIN: ต้องระบุ health_center_id
-        ส่ง user_ids=[] เพื่อถอดมอบหมายทั้งหมด
-      operationId: staffSyncAssignees
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SyncAssigneesRequest"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/SuccessResponse"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/Service"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/staff/services/{id}/time-slot-days:
-    parameters:
-      - $ref: "#/components/parameters/ServiceId"
-
-    put:
-      tags: [HEALTH_CENTER_ADMIN]
-      summary: ตั้งค่าวันเปิดให้บริการ (Operating Days) รายช่วงเวลาของบริการ
-      description: |
-        กำหนดวันเปิดให้บริการรายสัปดาห์ (1=จันทร์ … 7=อาทิตย์) สำหรับแต่ละช่วงเวลาของบริการ (Full Replace)
-        HC_ADMIN: แก้บริการในศูนย์ของตนเองเท่านั้น
-        SUPER_ADMIN: ต้องระบุ health_center_id
-        - บริการ/ช่วงเวลาจะถูกใช้จอง ดู Available Slots และ Walk-in ได้เฉพาะในวันที่เปิดให้บริการเท่านั้น
-        - ต้องเหลืออย่างน้อย 1 (ช่วงเวลา, วัน) ที่เปิดให้บริการ (ปฏิเสธ 422 ถ้าทิ้งว่าง)
-        - ไม่สามารถลบ (ช่วงเวลา, วัน) ที่มีนัด CONFIRMED ในอนาคตค้างอยู่ได้ (422)
-        - **ช่วงเวลาที่เลือกต้องเป็นของศูนย์เดียวกับบริการ** → ต่างศูนย์ = 422
-          `"ช่วงเวลาที่เลือกไม่ได้อยู่ในศูนย์สุขภาพเดียวกับบริการ"`
-          บังคับไว้ 2 ชั้น คือตรวจในโค้ด และ foreign key แบบ composite ในฐานข้อมูล
-          (เดิมไม่เคยตรวจข้อนี้ จึงผูกช่วงเวลาข้ามศูนย์ได้)
-        - ทุกการตั้งค่าถูกบันทึก Audit Log (SERVICE_TIME_SLOT_DAYS_SYNC)
-      operationId: staffSyncServiceTimeSlotDays
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SyncServiceTimeSlotDaysRequest"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/SuccessResponse"
-                  - type: object
-                    properties:
-                      message:
-                        type: string
-                        example: "ตั้งค่าวันเปิดให้บริการสำเร็จ"
-                      data:
-                        $ref: "#/components/schemas/Service"
-        "422":
-          $ref: "#/components/responses/ValidationError"
+                        description: สถานะหลังสลับ
+                      is_configured:
+                        type: boolean
+                        description: ตอนนี้ค่าตั้งครบจนเปิดให้บริการได้หรือยัง
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-
-  /v1/staff/services/{id}/staff:
-    parameters:
-      - $ref: "#/components/parameters/ServiceId"
-
-    put:
-      tags: [HEALTH_CENTER_ADMIN]
-      summary: ผูกหมอ/เจ้าหน้าที่ที่เลือกได้เข้ากับบริการ (Selectable Staff)
-      description: |
-        กำหนดรายชื่อหมอที่ผู้รับบริการเลือกได้ ประจำบริการที่เปิด allow_staff_selection
-
-        สิทธิ์: HEALTH_CENTER_ADMIN (ศูนย์ตัวเอง) / SUPER_ADMIN (ต้องระบุ health_center_id)
-
-        ข้อกำหนด:
-        - ส่ง staff_ids = [] เพื่อถอดทั้งหมด
-        - แต่ละคนต้องเป็นบุคลากรของศูนย์เดียวกันกับบริการ และอยู่ในหมวดหมู่เดียวกับบริการ (422)
-        - แกะหมอที่มีคิว CONFIRMED ในอนาคตค้างอยู่ไม่ได้ (422)
-        - ทุกการตั้งค่าถูกบันทึก Audit Log (SERVICE_SELECTABLE_STAFF_SYNC)
-      operationId: staffSyncServiceStaff
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SyncServiceStaffRequest"
-      responses:
-        "200":
-          description: OK
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: เปิดไม่ได้เพราะตั้งค่าไม่ครบ หรือปิดไม่ได้เพราะมีคิวค้าง
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: "#/components/schemas/SuccessResponse"
-                  - type: object
-                    properties:
-                      message:
-                        type: string
-                        example: "ผูกเจ้าหน้าที่ที่เลือกได้เข้ากับบริการสำเร็จ"
-                      data:
-                        $ref: "#/components/schemas/Service"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
+                $ref: "#/components/schemas/ErrorResponse"
+
 
   /v1/staff/roster/{id}/toggle-duty:
     parameters:
@@ -2658,6 +2750,15 @@ components:
       schema:
         type: integer
       description: Service ID
+    CenterServiceConfigId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: |
+        รหัสแถวตั้งค่าของศูนย์ (health_center_service) ไม่ใช่รหัสบริการในรายการกลาง
+        ได้จาก config_id ในรายการบริการของศูนย์
     AppointmentId:
       name: id
       in: path
@@ -3171,10 +3272,14 @@ components:
     PatientServiceBrief:
       type: object
       description: |
-        บริการฉบับย่อ (response ของ GET /v1/patient/health-centers/{id}/services)
-        — projection แบบจำกัด: ไม่มี is_active / assigned_staff
-        - มี allow_staff_selection สำหรับสลับ UI เลือกหมอ <-> จองทั่วไป
-        - category / capacity ผ่าน Resource ที่กรองฟิลด์ (ไม่มี created_at / updated_at)
+        บริการที่ศูนย์หนึ่งแห่งให้บริการจริง
+        (response ของ GET /v1/patient/health-centers/{id}/services)
+        - ระบบส่งเฉพาะบริการที่ศูนย์เปิดอยู่ **และ** มีช่วงเวลาเปิดอย่างน้อยหนึ่งช่วง
+          และอยู่ในหมวดหมู่ที่เปิดใช้งาน
+        - ค่าของศูนย์ไม่ได้อยู่แบนรวมกับบริการ แต่อยู่ใต้คีย์ `center_service`
+        - คืนชื่อบุคลากรที่ดูแลและที่ผู้รับบริการเลือกได้ พร้อมกัน
+          หน้าจอจองจึงแสดงได้ว่าใครอยู่เวรโดยไม่ต้องเรียกอีก endpoint
+        - ไม่มี created_at / updated_at
       properties:
         id:
           type: integer
@@ -3183,34 +3288,18 @@ components:
         description:
           type: string
           nullable: true
-        capacity_type:
-          type: string
-          enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
-        allow_staff_selection:
-          type: boolean
-          description: เปิด/ปิดให้ผู้รับบริการเลือกหมอ/เจ้าหน้าที่สำหรับบริการนี้
         category:
           $ref: "#/components/schemas/Category"
-        capacity:
-          type: object
-          nullable: true
-          properties:
-            id:
-              type: integer
-            max_per_slot:
-              type: integer
-              nullable: true
-            max_per_day:
-              type: integer
-              nullable: true
-        time_slots:
-          type: array
-          description: ช่วงเวลาให้บริการ พร้อมวันเปิดให้บริการ (จาก Service::slotsWithDays — แบบ {time_slot_id, days})
-          items:
-            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
+        center_service:
+          $ref: "#/components/schemas/HealthCenterService"
 
     Service:
       type: object
+      description: |
+        บริการในรายการกลาง — ตัวบริการมีเท่านี้ หมวดหมู่ ชื่อ คำอธิบาย
+        โควตา วันให้บริการ ผู้รับผิดชอบ บุคลากรที่ผู้รับบริการเลือกได้
+        และสถานะเปิด/ปิด เป็นค่าของศูนย์ ไม่ใช่ค่าของบริการ
+        จึงไม่มีใน schema นี้ — ดู HealthCenterService ที่มาจากแถวตั้งค่าของศูนย์
       properties:
         id:
           type: integer
@@ -3220,48 +3309,135 @@ components:
         description:
           type: string
           nullable: true
+        category:
+          $ref: "#/components/schemas/Category"
+
+    HealthCenterService:
+      type: object
+      description: |
+        แถวตั้งค่าของศูนย์หนึ่งแห่งสำหรับบริการหนึ่ง — ค่าทั้งหมดใน schema นี้เป็นของศูนย์
+        บริการหนึ่งบริการถูกหลายศูนย์เปิดใช้พร้อมกันได้ แต่ละศูนย์ตั้งค่าของตัวเอง
+        - คืนจากการเปิด/แก้ไข/อ่านรายการของศูนย์ และฝังอยู่ใต้คีย์ `service`
+          ของนัดหมาย (เฉพาะสามคีย์ capacity_type, allow_staff_selection, is_active)
+        - **ค่าบนนัดหมายเก่าเป็นค่าปัจจุบันของศูนย์ ไม่ใช่ค่าที่ใช้ตอนจอง**
+          เพราะระบบไม่ได้เก็บภาพค่าไว้ ณ วันที่จอง หน้าจอที่กำลังดูนัดหมายเก่า
+          ถามว่า "ที่ศูนย์นี้เป็นอย่างไร" ไม่ใช่ "ตอนจองเป็นอย่างไร"
+      properties:
+        config_id:
+          type: integer
+          description: รหัสแถวตั้งค่านี้ ใช้กับ PATCH /v1/staff/health-center-services/{id} และ toggle-status
+        id:
+          type: integer
+          description: รหัสแถวตั้งค่า (รูปแบบเต็มของแถว ใช้ใน response ฝั่งผู้รับบริการ)
+        health_center_id:
+          type: integer
+          description: ศูนย์เจ้าของแถวตั้งค่านี้
+        service_id:
+          type: integer
+          description: บริการในรายการกลางที่แถวนี้ตั้งค่าให้
+        is_configured:
+          type: boolean
+          description: ตั้งค่าครบจนเปิดให้บริการได้หรือยัง — ดู ActivateCenterServiceRequest
+        is_active:
+          type: boolean
+          description: ศูนย์นี้เปิดให้บริการได้อยู่หรือไม่
         capacity_type:
           type: string
           enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
-        is_active:
-          type: boolean
+          nullable: true
+          description: วิธีนับโควตา
         allow_staff_selection:
           type: boolean
-          description: เปิด/ปิดให้ผู้รับบริการเลือกหมอ/เจ้าหน้าที่ (เปิดได้เฉพาะ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว)
-        category:
-          $ref: "#/components/schemas/Category"
-        capacity:
-          type: object
+          description: เปิดให้ผู้รับบริการเลือกบุคลากรเองหรือไม่ — เปิดได้เฉพาะ capacity_type = PER_MASSEUSE
+        max_per_slot:
+          type: integer
           nullable: true
-          properties:
-            id:
-              type: integer
-            max_per_slot:
-              type: integer
-              nullable: true
-            max_per_day:
-              type: integer
-              nullable: true
+          description: โควตาสูงสุดต่อช่วงเวลา (ใช้เมื่อ capacity_type = PER_SLOT)
+        max_per_day:
+          type: integer
+          nullable: true
+          description: โควตาสูงสุดต่อวัน (ใช้เมื่อ capacity_type = PER_DAY)
         time_slots:
           type: array
-          description: ช่วงเวลาเปิดให้บริการของบริการนี้ พร้อมวันเปิดให้บริการ (days) ต่อช่วง
+          description: ช่วงเวลาที่ศูนย์นี้เปิดให้บริการ พร้อมวันในสัปดาห์ต่อช่วง
           items:
-            $ref: "#/components/schemas/ServiceTimeSlotHours"
+            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
         assigned_staff:
           type: array
           description: |
-            บัญชีเจ้าหน้าที่ปฏิบัติงานที่ได้รับมอบหมายให้ดูแลบริการนี้
-            คืนทุกครั้งที่เรียก GET /v1/staff/services เพราะหน้าเคาน์เตอร์ต้องรู้ว่าใครดูแลบริการไหน
+            บัญชีเจ้าหน้าที่ปฏิบัติงานที่ได้รับมอบหมายให้ดูแลบริการนี้ที่ศูนย์นี้
+            กำหนดว่าใครเห็นและจัดการคิวของบริการนี้ได้
           items:
             $ref: "#/components/schemas/StaffSummary"
         selectable_staff:
           type: array
           description: |
-            บุคลากรที่ผู้รับบริการเลือกได้ (service_staff) พร้อม `status` เพื่อให้หน้าเคาน์เตอร์
-            ตัดคนที่หยุดให้บริการออกได้เอง
-            คืนทุกครั้งที่เรียก GET /v1/staff/services
+            บุคลากรที่ผู้รับบริการเลือกได้เมื่อเปิด allow_staff_selection
+            ต้องมีอย่างน้อย 1 คน ไม่งั้นแถวนี้จะไม่นับว่าตั้งค่าครบ
           items:
             $ref: "#/components/schemas/SelectableStaffWithStatus"
+
+    CenterService:
+      allOf:
+        - $ref: "#/components/schemas/Service"
+        - $ref: "#/components/schemas/HealthCenterService"
+      description: |
+        บริการในรายการกลางที่ทับด้วยค่าตั้งของศูนย์หนึ่งแห่ง
+        (GET /v1/staff/health-centers/{id}/services)
+        บริการที่ศูนย์ยังไม่ได้ตั้งค่า จะมีแต่ส่วนของ Service — ไม่มีคีย์ค่าของศูนย์เลย
+        เพราะผู้ดูแลศูนย์ต้องเห็นบริการที่ยังเลือกเปิดได้
+
+    CatalogService:
+      allOf:
+        - $ref: "#/components/schemas/Service"
+        - $ref: "#/components/schemas/HealthCenterService"
+        - type: object
+          properties:
+            centers:
+              type: array
+              description: |
+                ศูนย์ที่เปิดบริการนี้ไว้ทั้งจังหวัด
+                คืนเสมอทุกรายการในรายการกลาง ไม่ว่าจะกรองด้วย health_center_id หรือไม่
+                เพราะผู้ดูแลระบบดูแลทุกศูนย์ จึงต้องรู้ว่าบริการนี้ถูกเปิดที่ศูนย์ไหนบ้าง
+              items:
+                $ref: "#/components/schemas/CenterOffering"
+      description: |
+        บริการในรายการกลาง (GET /v1/staff/admin/services)
+        ถ้าไม่ระบุ health_center_id จะไม่มีคีย์ค่าของศูนย์ใด ๆ
+        มีแต่ `centers[]` ที่บอกว่าศูนย์ไหนเปิดอยู่และตั้งค่าครบแค่ไหน
+
+    CenterOffering:
+      type: object
+      description: สรุปว่าศูนย์หนึ่งแห่งเปิดบริการนี้ไว้ในสถานะใด
+      properties:
+        health_center_id:
+          type: integer
+        health_center_name:
+          type: string
+          nullable: true
+        health_center_code:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        is_configured:
+          type: boolean
+          description: ศูนย์นั้นตั้งค่าครบจนเปิดให้บริการได้หรือยัง
+
+    SelectableStaffWithStatus:
+      type: object
+      description: บุคลากรที่ผู้รับบริการเลือกได้ พร้อมสถานะ (ใน HealthCenterService.selectable_staff)
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        position:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, LEAVE]
 
     SelectableStaffWithStatus:
       type: object
@@ -3331,22 +3507,6 @@ components:
           description: |
             ศูนย์เจ้าของช่วงเวลา — คืนเฉพาะ endpoint รายการช่วงเวลาของผู้ดูแล เท่านั้น
             ที่อื่นที่ฝัง time_slot (เช่น นัดหมายของผู้รับบริการ) จะไม่มี field นี้
-
-    ServiceTimeSlotHours:
-      type: object
-      description: ช่วงเวลาเปิดให้บริการของบริการ พร้อมวันเปิดให้บริการรายสัปดาห์ (1=จันทร์ … 7=อาทิตย์)
-      allOf:
-        - $ref: "#/components/schemas/TimeSlot"
-        - type: object
-          properties:
-            days:
-              type: array
-              description: "วันเปิดให้บริการของช่วงเวลานี้ (ISO 8601: 1=จันทร์, 2=อังคาร, … 7=อาทิตย์)"
-              items:
-                type: integer
-                minimum: 1
-                maximum: 7
-              example: [1, 3, 5]
 
     AvailableSlot:
       type: object
@@ -3419,7 +3579,26 @@ components:
         health_center:
           $ref: "#/components/schemas/HealthCenter"
         service:
-          $ref: "#/components/schemas/Service"
+          allOf:
+            - $ref: "#/components/schemas/Service"
+            - type: object
+              description: |
+                บริการพร้อมค่าของศูนย์ที่นัดหมายนั้นอยู่ ซึ่งทับลงบนข้อมูลตัวบริการ
+                ค่าทั้งสามเป็น **ค่าปัจจุบันของศูนย์ ไม่ใช่ค่าที่ใช้ตอนจอง**
+                เพราะระบบไม่ได้เก็บภาพค่าไว้ ณ วันที่จอง
+                หน้าจอที่ดูนัดหมายเก่าจึงเห็นโควตาและสวิตช์ของวันนี้ของศูนย์
+                ไม่ใช่ของวันที่จอง
+                คีย์เหล่านี้จะไม่ปรากฏ ถ้าจุดเรียกนั้นไม่ได้ขอค่าของศูนย์มาด้วย
+              properties:
+                capacity_type:
+                  type: string
+                  enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
+                  nullable: true
+                allow_staff_selection:
+                  type: boolean
+                is_active:
+                  type: boolean
+                  description: ศูนย์นี้ยังเปิดให้บริการนี้อยู่หรือไม่
         time_slot:
           $ref: "#/components/schemas/TimeSlot"
         staff:
@@ -3659,78 +3838,112 @@ components:
                 $ref: "#/components/schemas/Service"
 
     # ---- Requests ----
-    CreateServiceRequest:
+    StoreCatalogServiceRequest:
       type: object
-      required: [category_id, name, capacity_type, time_slots]
+      required: [category_id, name]
+      description: |
+        เพิ่มบริการเข้ารายการกลาง — มีเฉพาะตัวบริการ
+        ไม่มีช่องโควตา ช่วงเวลา ผู้รับผิดชอบ หรือบุคลากรที่เลือกได้
+        เพราะทั้งหมดนั้นเป็นค่าของศูนย์ ตั้งตอนเปิดบริการให้ศูนย์หนึ่งแห่ง
       properties:
-        health_center_id:
+        category_id:
           type: integer
-          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
+          description: ต้องมีอยู่จริง
+        name:
+          type: string
+          maxLength: 255
+          description: ชื่อบริการ — ต้องไม่ซ้ำทั้งระบบ (รวมชื่อที่เคยลบออกไปแล้ว)
+        description:
+          type: string
+          nullable: true
+
+    UpdateCatalogServiceRequest:
+      type: object
+      description: |
+        แก้ไขบริการในรายการกลาง — ส่งเฉพาะช่องที่ต้องการเปลี่ยน
+        ค่าที่เป็นของศูนย์แก้ที่นี่ไม่ได้
+      properties:
         category_id:
           type: integer
         name:
           type: string
           maxLength: 255
+          description: ชื่อบริการ — ต้องไม่ซ้ำทั้งระบบ (รวมชื่อที่เคยลบออกไปแล้ว)
         description:
           type: string
+          nullable: true
+
+    ActivateCenterServiceRequest:
+      type: object
+      required: [service_id, capacity_type, time_slots, assignee_ids]
+      description: |
+        เปิดบริการในรายการกลางให้ศูนย์หนึ่งแห่ง พร้อมตั้งค่าให้ครบในคำขอเดียว
+        (POST /v1/staff/health-centers/{id}/services)
+
+        **"ครบ" มีหกข้อ** ถ้าขาดข้อใดข้อหนึ่ง ระบบปฏิเสธทั้งคำขอ
+        ไม่เหลือแถวตั้งค่าค้างไว้ และข้อความจะระบุรายการที่ขาดทั้งหมดพร้อมกัน:
+        1. `capacity_type` — วิธีนับโควตา
+        2. โควตาตัวเลข ถ้าวิธีที่เลือกต้องใช้ — `max_per_slot` เมื่อ PER_SLOT, `max_per_day` เมื่อ PER_DAY
+        3. ถ้าเปิด `allow_staff_selection` ต้องเป็น PER_MASSEUSE และมี `selectable_staff_ids` อย่างน้อย 1 คน
+        4. `time_slots` อย่างน้อย 1 ช่วง และแต่ละช่วงต้องมีวันอย่างน้อย 1 วัน
+        5. `assignee_ids` อย่างน้อย 1 คน — ผู้รับผิดชอบบริการของศูนย์นี้
+      properties:
+        service_id:
+          type: integer
+          description: บริการในรายการกลางที่จะเปิด
         capacity_type:
           type: string
           enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
+        max_per_slot:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: บังคับเมื่อ capacity_type = PER_SLOT
+        max_per_day:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: บังคับเมื่อ capacity_type = PER_DAY
         allow_staff_selection:
           type: boolean
-          enum: [false]
           default: false
           description: |
-            ไม่สามารถเปิดให้เลือกหมอตอนสร้างบริการได้ (value ต้องเป็น false/0)
-            - สร้างบริการก่อน → ผูกหมอที่เลือกได้ (PUT /v1/staff/services/{id}/staff) → เปิด allow_staff_selection ผ่านการแก้ไขบริการ
-        max_per_slot:
-          type: integer
-          minimum: 1
-          description: Required when capacity_type = PER_SLOT
-        max_per_day:
-          type: integer
-          minimum: 1
-          description: Required when capacity_type = PER_DAY
-        time_slots:
+            เปิดให้ผู้รับบริการเลือกบุคลากรเอง — ได้เฉพาะ capacity_type = PER_MASSEUSE
+            เพราะการเลือกบุคลากรจะกลายเป็นการสัญญาว่าจะให้บริการ
+            โดยที่โควตาไม่ได้รับผลกระทบ
+        selectable_staff_ids:
           type: array
           minItems: 1
-          description: ช่วงเวลาเปิดให้บริการ อย่างน้อย 1 ช่วง พร้อมวันเปิดให้บริการ (days) ต่อช่วง
-          items:
-            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
-
-    UpdateServiceRequest:
-      type: object
-      properties:
-        health_center_id:
-          type: integer
-          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
-        name:
-          type: string
-          maxLength: 255
-        description:
-          type: string
-        category_id:
-          type: integer
-        capacity_type:
-          type: string
-          enum: [PER_MASSEUSE, PER_SLOT, PER_DAY]
-        allow_staff_selection:
-          type: boolean
           description: |
-            เปิด/ปิดให้ผู้รับบริการเลือกหมอ — เปิดได้เฉพาะ services ที่ capacity_type=PER_MASSEUSE และต้องมีหมอผูกไว้แล้ว (service_staff);
-            การปิดต้องไม่มีคิว CONFIRMED ในอนาคตที่ผูกกับหมอไว้ (422)
-        max_per_slot:
-          type: integer
-          minimum: 1
-        max_per_day:
-          type: integer
-          minimum: 1
+            บุคลากรที่ผู้รับบริการเลือกได้ — บังคับเมื่อ allow_staff_selection = true
+            แต่ละคนต้องเป็นบุคลากรของศูนย์เดียวกัน และอยู่ในหมวดหมู่เดียวกับบริการ
+          items:
+            type: integer
         time_slots:
           type: array
           minItems: 1
-          description: ช่วงเวลาเปิดให้บริการ พร้อมวันเปิดให้บริการ (days) ต่อช่วง
+          description: ช่วงเวลาที่ศูนย์นี้เปิดให้บริการ พร้อมวันในสัปดาห์ต่อช่วง
           items:
             $ref: "#/components/schemas/ServiceTimeSlotDayInput"
+        assignee_ids:
+          type: array
+          minItems: 1
+          description: |
+            บัญชีเจ้าหน้าที่ที่ได้รับมอบหมายให้ดูแลบริการนี้
+            แต่ละบัญชีต้องมีบทบาท STAFF และสังกัดศูนย์เดียวกัน
+          items:
+            type: integer
+
+    UpdateCenterServiceConfigRequest:
+      description: |
+        แก้ไขค่าตั้งของบริการที่ศูนย์เปิดไว้ — ส่งเฉพาะช่องที่ต้องการเปลี่ยน
+        (PATCH /v1/staff/health-center-services/{id})
+
+        ใช้ชุดกติกาเดียวกับการเปิด แต่ทุกช่องเป็น "ถ้าส่งมา" ไม่ใช่ "ต้องส่ง"
+        แถวที่เปิดอยู่ต้องยังให้บริการได้จริงหลังแก้ ค่าที่ขาดจะถูกปฏิเสธ
+        พร้อมรายการที่ขาดทั้งหมด ส่วนแถวที่ปิดอยู่เก็บค่าตั้งค้างไว้ได้
+      allOf:
+        - $ref: "#/components/schemas/ActivateCenterServiceRequest"
 
     ServiceTimeSlotDayInput:
       type: object
@@ -3749,21 +3962,6 @@ components:
             minimum: 1
             maximum: 7
           example: [1, 2, 3, 4, 5]
-
-    SyncServiceTimeSlotDaysRequest:
-      type: object
-      description: ตั้งค่าวันเปิดให้บริการ (Operating Days) รายช่วงเวลาของบริการหนึ่ง (แบบ Full Replace)
-      required: [time_slots]
-      properties:
-        health_center_id:
-          type: integer
-          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ; HC_ADMIN ไม่ต้องส่ง — ใช้ศูนย์ของตัวเอง)
-        time_slots:
-          type: array
-          minItems: 1
-          description: ชุด (ช่วงเวลา, วันเปิดให้บริการ) ทั้งหมดที่จะใช้แทนข้อมูลเดิม — อย่างน้อย 1 ช่วง และบริการ Active ต้องมี shaded (ช่วง, วัน) อย่างน้อย 1 รายการ
-          items:
-            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
 
     StaffLeaveResource:
       type: object
@@ -3817,36 +4015,6 @@ components:
           type: string
           maxLength: 500
           description: เหตุผล (ไม่บังคับ)
-
-    SyncAssigneesRequest:
-      type: object
-      required: [user_ids]
-      properties:
-        health_center_id:
-          type: integer
-          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ)
-        user_ids:
-          type: array
-          description: รายการ user_id ของ STAFF ที่ต้องมอบหมาย ([] = ถอดทั้งหมด)
-          items:
-            type: integer
-
-    SyncServiceStaffRequest:
-      type: object
-      required: [staff_ids]
-      description: ผูก/ถอด หมอ/เจ้าหน้าที่ที่ผู้รับบริการเลือกได้ (Selectable Staff) ประจำบริการ
-      properties:
-        health_center_id:
-          type: integer
-          description: ศูนย์สุขภาพ เป้าหมาย (SUPER_ADMIN ต้องระบุเสมอ; HC_ADMIN ไม่ต้องส่ง — ใช้ศูนย์ของตัวเอง)
-        staff_ids:
-          type: array
-          description: |
-            รายการ staff_id ของหมอ/เจ้าหน้าที่ที่ผู้รับบริการเลือกได้ ([] = ถอดทั้งหมด)
-            - ต้องเป็นบุคลากรของศูนย์เดียวกันกับบริการ และอยู่ในหมวดหมู่เดียวกับบริการ (422)
-            - แกะหมอที่มีคิว CONFIRMED ในอนาคตค้างอยู่ไม่ได้ (422)
-          items:
-            type: integer
 
     ReassignStaffRequest:
       type: object
