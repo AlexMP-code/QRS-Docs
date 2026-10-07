@@ -471,7 +471,7 @@ paths:
         **Soft delete** — ผู้ใช้ถูกลบแบบ soft (ตั้ง `deleted_at`) และไม่มี endpoint กู้คืน:
         - บัญชีหายจากรายชื่อผู้ใช้ และ login ไม่ได้อีกต่อไป
         - บุคลากรใน roster ของบัญชีถูกตัดออก: `staff.user_id` → null, `staff.status` → INACTIVE (ยังอยู่ใน roster)
-        - เลิกผูกบริการที่ผู้รับบริการเลือกได้ (`service_user`) และเพิกถอน token (Sanctum) ทั้งหมด
+        - เลิกผูกบริการที่ผู้รับบริการเลือกได้ (`health_center_service_user`) และเพิกถอน token (Sanctum) ทั้งหมด
         - เก็บประวัติ `user_roles` / `staff_leaves` / `audit_logs` ไว้; username/email เดิมไม่ถูกนำมาใช้ซ้ำ
 
         Guard ที่ห้ามลบ (422):
@@ -1621,8 +1621,9 @@ paths:
       summary: "[Staff All] ตรวจสอบความพร้อมปฏิบัติงาน ณ วันที่ระบุ"
       description: |
         เช็คความพร้อมก่อนเปิดนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์ / การจอง — available: true/false
-        - allow_staff_selection=true → true เมื่อบุคลากรที่เลือกได้ (service_staff, ACTIVE, ไม่ลา) ≥ 1
-        - allow_staff_selection=false → true เมื่อผู้รับผิดชอบบริการ (service_user) ≥ 1 คนไม่ลาวันนั้น
+        - allow_staff_selection=true → true เมื่อบุคลากรที่เลือกได้ (health_center_service_staff, ACTIVE, ไม่ลา) ≥ 1
+        - allow_staff_selection=false → true เมื่อผู้รับผิดชอบบริการ (health_center_service_user) ≥ 1 คนไม่ลาวันนั้น
+        - ต้องระบุ health_center_id เสมอ — ความพร้อมเป็นคำถามของศูนย์หนึ่ง ไม่ใช่ของบริการ
       operationId: staffCheckAvailability
       parameters:
         - name: service_id
@@ -1631,6 +1632,14 @@ paths:
           schema:
             type: integer
           description: ID บริการ
+        - name: health_center_id
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: |
+            ID ของศูนย์ที่ต้องการตรวจ — ไม่บังคับสำหรับ HC_ADMIN/STAFF (ใช้ศูนย์จาก token)
+            SUPER_ADMIN ต้องส่งมา ถ้าไม่ส่งจะได้ 422 "กรุณาระบุศูนย์สุขภาพที่ต้องการตรวจสอบ"
         - name: date
           in: query
           required: true
@@ -1707,7 +1716,16 @@ paths:
           required: true
           schema:
             type: integer
-          description: ID ของบริการ (ต้อง active)
+          description: ID ของบริการ
+        - name: health_center_id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: |
+            ID ของศูนย์ที่ต้องการดูช่วงเวลาว่าง — required
+            ช่วงเวลาและโควตาเป็นของศูนย์นั้น ไม่ใช่ของบริการ
+            ไม่ระบุ → 422 "กรุณาระบุศูนย์สุขภาพ"
         - name: date
           in: query
           required: true
@@ -2092,7 +2110,7 @@ paths:
 
         **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ reassign-staff และ unmask):**
         คิวเป็นของศูนย์ แต่ "ใครทำกับคิวนี้ได้" ขึ้นกับสองเงื่อนไข เข้าได้อย่างน้อยหนึ่งทาง
-        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        1. ได้รับมอบหมายบริการนั้น (`health_center_service_user`)
         2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`)
 
         STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้"
@@ -2138,11 +2156,11 @@ paths:
 
         **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status และ unmask):**
         STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้"
-        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        1. ได้รับมอบหมายบริการนั้น (`health_center_service_user`)
         2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`) — คนที่ให้บริการจริง
 
         - คิวต้องยังเป็นสถานะ CONFIRMED
-        - คนใหม่ต้องผูกกับบริการ (service_staff), ว่างวันนั้น (ไม่ลา) และยังไม่เต็มคิวในรอบเวลานั้น (โควตา 1 คิว/รอบ/คน)
+        - บุคลากรคนใหม่ต้องอยู่ในรายชื่อที่ศูนย์นั้นให้เลือก (health_center_service_staff) ว่างวันนั้น (ไม่ลา) และยังไม่เต็มคิวในรอบเวลานั้น (โควตา 1 คิว/รอบ/คน)
         - ย้ายเป็นคนเดิมซ้ำไม่ได้ (422)
         - **ตรวจโควตาและบันทึกอยู่ในธุรกรรมเดียวกัน** พร้อมล็อกแถวศูนย์สุขภาพและแถวนัดหมาย
           ถ้าโควตาไม่ผ่านจะ rollback ทั้งหมด ไม่เหลือ audit ค้าง
@@ -2200,7 +2218,7 @@ paths:
 
         **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status, reassign-staff และ unmask):**
         STAFF ที่ไม่เข้าเงื่อนไขทั้งสองทาง → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้"
-        1. ได้รับมอบหมายบริการนั้น (`service_user`)
+        1. ได้รับมอบหมายบริการนั้น (`health_center_service_user`)
         2. เป็นผู้ถูกระบุในคิวนั้น (`appointments.staff_id`)
 
         - คิวต้องยังเป็นสถานะ CONFIRMED (เสร็จ/ยกเลิก/ไม่มาแล้วเลื่อนไม่ได้ → 422)
@@ -2366,7 +2384,7 @@ paths:
         บันทึก audit_logs (UPDATE_PATIENT_CONTACT) ทุกครั้งที่สำเร็จ
 
         **ขอบเขต (STAFF เท่านั้น):** ผู้รับบริการผูกกับบริการผ่านประวัติคิว
-        จึงต้องเคยมีนัดหมายอย่างน้อยหนึ่งครั้งในบริการที่ได้รับมอบหมาย (`service_user`)
+        จึงต้องเคยมีนัดหมายอย่างน้อยหนึ่งครั้งในบริการที่ได้รับมอบหมาย (`health_center_service_user`)
         - ไม่จำกัดวัน — เบอร์ที่ผิดมักถูกแก้หลังการมาเยือนเสร็จไปแล้ว
         - STAFF ที่ไม่ผ่านเงื่อนไข → **403** "ไม่ได้รับมอบหมายให้ดูแลบริการนี้" และไม่เขียน audit log
         - Patient ที่ไม่มีประวัติคิวในศูนย์นี้เลย → **404**
@@ -3130,7 +3148,7 @@ components:
           type: array
           description: ช่วงเวลาที่ศูนย์นี้เปิดให้บริการ พร้อมวันในสัปดาห์ต่อช่วง
           items:
-            $ref: "#/components/schemas/ServiceTimeSlotDayInput"
+            $ref: "#/components/schemas/ServiceTimeSlotDayOutput"
         assigned_staff:
           type: array
           description: |
@@ -3692,6 +3710,40 @@ components:
             maximum: 7
           example: [1, 2, 3, 4, 5]
 
+    ServiceTimeSlotDayOutput:
+      type: object
+      description: |
+        ช่วงเวลาของศูนย์ในคำตอบ — ตัวช่วงเวลาเต็มพร้อมวันในสัปดาห์
+        ต่างจาก ServiceTimeSlotDayInput ที่เป็นคำขอ (มีแค่ id กับวัน)
+      required: [id, label, start_time, end_time, time_slot_id, days]
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+          example: "09:00 - 09:30 น."
+        start_time:
+          type: string
+          example: "09:00"
+        end_time:
+          type: string
+          example: "09:30"
+        sort_order:
+          type: integer
+          nullable: true
+        is_active:
+          type: boolean
+        time_slot_id:
+          type: integer
+          description: ค่าเดียวกับ id — เก็บไว้ทั้งคู่เพื่อให้ผู้เรียกสลับคีย์ได้
+        days:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+          example: [1, 3, 5]
+
     PatientServiceBrief:
       type: object
       description: |
@@ -3773,7 +3825,7 @@ components:
           type: integer
         staff_id:
           type: integer
-          description: ID หมอ/เจ้าหน้าที่คนใหม่ (ต้องผูกกับ service_staff ของบริการในคิวนี้)
+          description: ID บุคลากรคนใหม่ (ต้องอยู่ในรายชื่อที่ศูนย์นั้นให้เลือก — health_center_service_staff)
 
     RescheduleAppointmentRequest:
       type: object
@@ -3868,7 +3920,7 @@ components:
         staff_id:
           type: integer
           nullable: true
-          description: ID บุคลากรที่ให้บริการ (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
+          description: ID บุคลากรที่ให้บริการ (required เมื่อศูนย์เปิด allow_staff_selection; ต้องอยู่ในรายชื่อที่ศูนย์นั้นให้เลือก)
         patient_right_id:
           type: integer
           nullable: true
@@ -3892,10 +3944,17 @@ components:
 
     BookAppointmentRequest:
       type: object
-      required: [service_id, time_slot_id, appointment_date]
+      required: [service_id, health_center_id, time_slot_id, appointment_date]
       properties:
         service_id:
           type: integer
+        health_center_id:
+          type: integer
+          description: |
+            ID ของศูนย์ที่จอง — required
+            ช่วงเวลาและโควตาเป็นของศูนย์นั้น ไม่ใช่ของบริการ
+            ไม่ระบุ → 422 "กรุณาระบุศูนย์สุขภาพ"
+            ศูนย์ที่ไม่ได้เปิดบริการนี้ → 422 "บริการนี้ยังไม่ได้เปิดให้บริการในศูนย์สุขภาพนี้"
         time_slot_id:
           type: integer
         appointment_date:
@@ -3904,7 +3963,7 @@ components:
         staff_id:
           type: integer
           nullable: true
-          description: ID บุคลากรที่เลือก (required เมื่อบริการ allow_staff_selection=true; ต้องผูกกับ service_staff ของบริการนี้)
+          description: ID บุคลากรที่เลือก (required เมื่อศูนย์เปิด allow_staff_selection; ต้องอยู่ในรายชื่อที่ศูนย์นั้นให้เลือก)
         patient_right_id:
           type: integer
           nullable: true
