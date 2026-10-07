@@ -221,6 +221,33 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/patient/logout:
+    post:
+      tags: ["1. Authentication & Profile"]
+      summary: "[Patient] ออกจากระบบ — ยกเลิก token ที่ใช้เรียกคำขอนี้"
+      description: |
+        ยกเลิก **เฉพาะ token ที่แนบมากับคำขอนี้** ไม่กระทบ token อื่นของผู้รับบริการคนเดิม
+        เพราะผู้รับบริการอาจเข้าจากหลายเครื่อง และเครื่องอื่นไม่ได้ขอออกจากระบบ
+        ตรงกับ `POST /v1/staff/logout`
+      operationId: patientLogout
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ออกจากระบบเรียบร้อยแล้ว"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/staff/me:
     get:
       tags: ["1. Authentication & Profile"]

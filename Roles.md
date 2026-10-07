@@ -41,6 +41,7 @@
 | `POST` | `/v1/patient/register` | `throttle:patient-register` (5 ครั้ง/นาที/IP) | ลงทะเบียน — สร้าง Patient + PatientRight (is_primary=true) + ออก token ผ่าน DB transaction |
 | `POST` | `/v1/patient/login` | `throttle:patient-login` (10 ครั้ง/นาที/เบอร์) | เข้าสู่ระบบด้วย เบอร์โทร+วันเกิด — lock 30 นาทีหลังผิดวันเกิด 5 ครั้ง |
 | `GET` | `/v1/patient/me` | `auth:sanctum`, `abilities:role:patient` | ดูข้อมูลส่วนตัว (masked) |
+| `POST` | `/v1/patient/logout` | `auth:sanctum`, `abilities:role:patient` | ออกจากระบบ — ยกเลิก **เฉพาะ token ที่ใช้เรียกคำขอนี้** ไม่กระทบ token อื่นของผู้รับบริการคนเดิม |
 
 **ฟิลด์ register (บังคับ):** `cid` (13 หลัก, unique), `first_name`, `last_name`, `phone_number` (10 หลัก, unique), `birth_date`, `right_type_id` (ต้องมี `exists:right_types,id`); optional: `gender` (MALE/FEMALE/OTHER), `subdistrict`, `district`, `province`, `full_address`, `main_hospital_name`
 
@@ -588,6 +589,7 @@
 | GET | `/v1/patient/health-centers/{id}/services` | public |
 | GET | `/v1/patient/available-slots` | public |
 | GET | `/v1/patient/me` | auth:sanctum + abilities:role:patient |
+| POST | `/v1/patient/logout` | auth:sanctum + abilities:role:patient |
 | POST | `/v1/patient/book` | auth:sanctum + abilities:role:patient |
 | GET | `/v1/patient/appointments` | auth:sanctum + abilities:role:patient |
 | GET | `/v1/patient/appointments/{id}` | auth:sanctum + abilities:role:patient |
