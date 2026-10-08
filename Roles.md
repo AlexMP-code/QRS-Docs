@@ -409,7 +409,7 @@
 | `DELETE` | `/v1/staff/admin/services/{id}` | ลบออกจากรายการกลาง (soft delete, ตอบ 204) — 422 ถ้ายังมีศูนย์ใดมีแถวตั้งค่าของบริการนี้ หรือมีคิว CONFIRMED ตั้งแต่วันนี้ขึ้นไป **ข้ามทุกศูนย์**; ชื่อที่ลบแล้วถูกสงวน ใช้ซ้ำไม่ได้ |
 | `POST` | `/v1/staff/admin/time-slots` | เพิ่ม slot — SUPER_ADMIN only; **บังคับ `health_center_id` (422/404)**; ปฏิเสธถ้าทับกับช่วงเวลาเดิมของศูนย์นั้น |
 | `PUT` | `/v1/staff/admin/time-slots/{id}` | แก้ slot — SUPER_ADMIN only; **บังคับ `health_center_id`; slot ต้องเป็นของศูนย์นั้น (ต่าง = 404)**; ส่ง `is_active: false` ตอนสร้างได้ |
-| `DELETE` | `/v1/staff/admin/time-slots/{id}` | **ไม่รองรับการลบช่วงเวลา** — ตอบ 422 ทุกกรณี (ไม่ว่าจะมีนัดหมายหรือไม่) พร้อมชี้ทางเลือก "กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน" |
+| `DELETE` | `/v1/staff/admin/time-slots/{id}` | **ไม่รองรับการลบช่วงเวลา** — ตอบ 422 ทุกกรณี (ไม่ว่าจะมีนัดหมายหรือไม่) และ `message` ระบุ endpoint ที่ใช้แทน คือ `PATCH /api/v1/staff/admin/time-slots/{id}/toggle-status` (แทน `{id}` ด้วย id ที่เรียก) |
 
 ### 5.3 การทำงานข้ามศูนย์ (ใช้ endpoint เดียวกับผู้ดูแลศูนย์ แต่ scope ข้ามศูนย์)
 

@@ -1406,7 +1406,9 @@ paths:
       operationId: staffDeleteTimeSlot
       responses:
         "422":
-          description: "ไม่รองรับการลบช่วงเวลา — กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน"
+          description: >-
+            ไม่รองรับการลบช่วงเวลา — ข้อความระบุ endpoint ที่ใช้แทน คือ
+            PATCH /api/v1/staff/admin/time-slots/{id}/toggle-status โดยแทนที่ {id} ด้วย id ที่เรียก
           content:
             application/json:
               schema:
@@ -1416,7 +1418,7 @@ paths:
                     properties:
                       message:
                         type: string
-                        example: "ไม่สามารถลบช่วงเวลาได้ กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน"
+                        example: "ไม่สามารถลบช่วงเวลาได้ กรุณาเปลี่ยนสถานะเป็นปิดใช้งานแทน ด้วย PATCH /api/v1/staff/admin/time-slots/12/toggle-status"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -1734,8 +1736,8 @@ paths:
       summary: "[Public] ตรวจสอบช่วงเวลา/สล็อตที่ยังว่างอยู่"
       description: |
         หากศูนย์อยู่ในสถานะ CLOSING / INACTIVE จะคืนค่า slots เป็นอาร์เรย์ว่าง (200)
-        - บริการเปิดเลือกหมอ (allow_staff_selection=true) → แต่ละ slot คืน staff[] เฉพาะหมอที่ว่างในรอบนั้น
-        - ถ้าไม่เปิด → slot ว่าง = ยังมีโควตาเหลือ (หมอไม่ลาทั้งหมด)
+        - บริการเปิดเลือกบุคลากร (allow_staff_selection=true) → แต่ละ slot คืน staff[] เฉพาะบุคลากรที่ว่างในรอบนั้น
+        - ถ้าไม่เปิด → slot ว่าง = ยังมีโควตาเหลือ (บุคลากรไม่ลาทั้งหมด)
       operationId: patientAvailableSlots
       parameters:
         - name: service_id
@@ -1792,8 +1794,8 @@ paths:
       summary: "[Patient] จองคิวนัดหมายออนไลน์"
       description: |
         เงื่อนไขปฏิเสธ (422): ศูนย์ปิดรับจอง (CLOSING / INACTIVE), ศูนย์เต็ม, บริการปิดใช้งาน,
-        จองซ้ำวันเดียวกัน, ไม่อยู่ใน Operating Days, หมอลาทั้งหมด ฯลฯ
-        - บริการที่เปิดเลือกหมอ (allow_staff_selection=true): ต้องส่ง staff_id ที่ผูกกับบริการ + ACTIVE + ไม่ลา → 422 ถ้าไม่ผ่าน
+        จองซ้ำวันเดียวกัน, ไม่อยู่ใน Operating Days, บุคลากรลาทั้งหมด ฯลฯ
+        - บริการที่เปิดเลือกบุคลากร (allow_staff_selection=true): ต้องส่ง staff_id ที่ผูกกับบริการ + ACTIVE + ไม่ลา → 422 ถ้าไม่ผ่าน
       operationId: patientBook
       requestBody:
         required: true
@@ -2085,7 +2087,7 @@ paths:
         - STAFF: เห็นเฉพาะคิวของบริการที่ตัวเองถูกมอบหมาย (assignees) — บริการนอกเหนือ → 403
         - HC_ADMIN/SUPER_ADMIN: ทุกคิวของศูนย์ (SA ระบุ ?health_center_id)
         - กรองด้วย date / service_id / status
-        - **`date` ไม่จำกัดวัน** — ส่งวันอนาคตเพื่อดูคิวที่หมอจองไว้ล่วงหน้าให้ผู้รับบริการได้
+        - **`date` ไม่จำกัดวัน** — ส่งวันอนาคตเพื่อดูคิวที่บุคลากรจองไว้ล่วงหน้าให้ผู้รับบริการได้
       operationId: staffListAppointments
       parameters:
         - name: date
@@ -2239,8 +2241,8 @@ paths:
       tags: ["6. Appointment & Queue"]
       summary: "[Staff ที่เข้าเงื่อนไขขอบเขต / ผู้ดูแลศูนย์ / ผู้ดูแลระบบ] เลื่อนคิวไปวันอื่น"
       description: |
-        ใช้เมื่อหมอติดงานด่วนจนให้บริการไม่ได้ จึงโทรคุยกับผู้รับบริการแล้วย้ายวันมา
-        **แก้คิวเดิม** — ไม่สร้างคิวใหม่ ไม่ยกเลิกคิวเดิม จึงใช้ได้ทั้งคิวที่หมอจองให้ไว้ล่วงหน้า
+        ใช้เมื่อบุคลากรติดงานด่วนจนให้บริการไม่ได้ จึงโทรคุยกับผู้รับบริการแล้วย้ายวันมา
+        **แก้คิวเดิม** — ไม่สร้างคิวใหม่ ไม่ยกเลิกคิวเดิม จึงใช้ได้ทั้งคิวที่บุคลากรจองให้ไว้ล่วงหน้า
         และคิวที่ผู้รับบริการจองเองผ่านระบบ
 
         **ขอบเขตการแตะคิว (ใช้เกณฑ์เดียวกับ update-status, reassign-staff และ unmask):**
@@ -2251,7 +2253,7 @@ paths:
         - คิวต้องยังเป็นสถานะ CONFIRMED (เสร็จ/ยกเลิก/ไม่มาแล้วเลื่อนไม่ได้ → 422)
         - `appointment_date` ต้องไม่ย้อนหลังกว่าวันนี้ → 422
         - ช่วงเวลาใหม่ต้องเปิดให้บริการในวันนั้น → 422
-        - ไม่มีอะไรเปลี่ยนเลย (วันเดิม + รอบเดิม + หมอเดิม) → 422
+        - ไม่มีอะไรเปลี่ยนเลย (วันเดิม + รอบเดิม + บุคลากรเดิม) → 422
           กันไว้เพราะเลขคิวจะถูกคำนวณใหม่จนคิวเดิมหายตำแหน่งโดยไม่มีเหตุผล
         - ถ้าระบุ staff_id ต้องผูกกับบริการ ไม่ลาวันนั้น และไม่เต็มรอบ → 422
         - ผู้รับบริการต้องไม่มีคิวอื่นของบริการนี้ในวันนั้น → 422
@@ -3320,7 +3322,7 @@ components:
         staff:
           type: array
           nullable: true
-          description: รายละเอียดรายหมอต่อรอบเวลา (มีเฉพาะเมื่อบริการ allow_staff_selection=true) — แต่ละหมอรองรับ 1 คิวต่อรอบ
+          description: รายละเอียดรายบุคลากรต่อรอบเวลา (มีเฉพาะเมื่อบริการ allow_staff_selection=true) — แต่ละบุคลากรรองรับ 1 คิวต่อรอบ
           items:
             type: object
             properties:
@@ -3333,7 +3335,7 @@ components:
                 nullable: true
               available:
                 type: boolean
-                description: หมอคนนี้ยังว่างในรอบเวลานี้หรือไม่
+                description: บุคลากรคนนี้ยังว่างในรอบเวลานี้หรือไม่
 
     # ---- Appointment ----
     Appointment:
@@ -3392,7 +3394,7 @@ components:
         staff:
           type: object
           nullable: true
-          description: หมอ/เจ้าหน้าที่ที่รับผิดชอบคิวนี้ (null = ระบบจัดสรรอัตโนมัติ)
+          description: บุคลากร/เจ้าหน้าที่ที่รับผิดชอบคิวนี้ (null = ระบบจัดสรรอัตโนมัติ)
           properties:
             id:
               type: integer
@@ -3436,7 +3438,7 @@ components:
         staff:
           type: object
           nullable: true
-          description: หมอ/เจ้าหน้าที่ที่เลือก (null = ระบบจัดสรรอัตโนมัติ)
+          description: บุคลากร/เจ้าหน้าที่ที่เลือก (null = ระบบจัดสรรอัตโนมัติ)
           properties:
             id:
               type: integer
