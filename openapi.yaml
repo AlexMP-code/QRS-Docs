@@ -1577,6 +1577,9 @@ paths:
       description: |
         `id` ในพาธคือแถวตั้งค่าของศูนย์
         - ต้องไม่มีคิวค้างของบริการนั้นในศูนย์นี้ (422)
+        - **ต้องไม่มีสิ่งที่ทำที่ถูกบันทึกไว้แล้ว (422)** เพราะประวัติของผู้รับบริการ
+          ดึงชื่อของสิ่งที่ทำจากรายการของศูนย์นี้ ถ้าลบแถวตั้งค่าทิ้ง ประวัติจะอ่านชื่อไม่ได้
+          ข้อความจะแนะนำให้ใช้การปิดแทน
         - ต่างจากการ **ปิด**: ค่าตั้งหายไปด้วย (โควตา วันให้บริการ ผู้รับผิดชอบ
           บุคลากรที่ผู้รับบริการเลือกได้) เปิดใหม่ต้องกรอกให้ครบอีกครั้ง
           การปิดแทนคงค่าตั้งไว้ เปิดคืนแล้วใช้ค่าเดิมได้ทันที
@@ -1657,6 +1660,252 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+
+  /v1/staff/health-centers/{id}/services/procedure-requirement:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: ศูนย์สุขภาพ (HC_ADMIN ใช้ศูนย์ตัวเองเสมอ)
+        schema:
+          type: integer
+
+    patch:
+      tags: [Staff (ทุกบทบาท)]
+      summary: ตั้งการบังคับระบุสิ่งที่ทำให้ทั้งหมวดในคำสั่งเดียว
+      description: |
+        ตั้ง `requires_procedure` ให้ทุกบริการที่อยู่ในหมวดที่ระบุ **และศูนย์นี้เปิดอยู่แล้ว**
+
+        - ไม่ใช่เงื่อนไขความครบ — เปิดหรือปิดได้ตลอด ไม่กระทบการเปิดให้บริการ
+        - ค่าเริ่มต้นเป็น **ปิด** เพราะบริการที่ต้องการรายละเอียดมีเพียงส่วนน้อย
+        - บริการที่ศูนย์ยังไม่เปิด **ไม่ถูกแตะและไม่ถูกเปิดขึ้นมาเอง**
+        - หมวดที่ไม่มีบริการเปิดอยู่เลย → **422** (ไม่ใช่ 200 ที่อัปเดต 0 แถวเงียบ ๆ)
+        - เขียน audit บริการละหนึ่งแถว
+          (`SERVICE_CENTER_PROCEDURE_REQUIREMENT_UPDATE`) เพราะการเปลี่ยนค่าตั้งของศูนย์ต้องทิ้งร่องรอยทุกครั้ง
+        - **ผู้เรียกได้:** `HEALTH_CENTER_ADMIN` (ศูนย์ตน) · `SUPER_ADMIN` (ศูนย์ในพาธ)
+      operationId: staffSetProcedureRequirementForCategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category_id, requires_procedure]
+              properties:
+                category_id:
+                  type: integer
+                  description: หมวดบริการ (`services.category_id`)
+                requires_procedure:
+                  type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          updated_count:
+                            type: integer
+                            description: จำนวนบริการที่ถูกตั้งค่า
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: ไม่พบหมวด หรือหมวดนั้นไม่มีบริการที่ศูนย์เปิดอยู่
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+
+  /v1/staff/health-center-services/{id}/procedures:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: รหัสแถวตั้งค่าของศูนย์ (health_center_service)
+        schema:
+          type: integer
+
+    get:
+      tags: [Staff (ทุกบทบาท)]
+      summary: อ่านรายการสิ่งที่ทำของบริการหนึ่งที่ศูนย์หนึ่ง
+      description: |
+        - เรียงตาม `last_used_at` มาก่อน `usage_count` แล้วจึงชื่อ
+        - **คืนรายการที่ปิดใช้งานด้วย** เพราะหน้าจอจัดการต้องเปิดกลับได้
+          หน้าปิดคิวค่อยกรองเฉพาะที่เปิดอยู่ที่ฝั่งจอ
+        - `usage_count` และ `last_used_at` เป็นค่าที่ระบบเป็นเจ้าของ ผู้ใช้ส่งค่าใหม่ไม่ได้
+        - เปิดให้ **STAFF** ด้วย เพราะต้องอ่านเพื่อเลือกตอนปิดคิว
+          (ศูนย์อื่น → 403)
+      operationId: staffListCenterServiceProcedures
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CenterServiceProcedure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      tags: [Staff (ทุกบทบาท)]
+      summary: เพิ่มรายการสิ่งที่ทำ
+      description: |
+        ชื่อห้ามซ้ำภายในบริการเดียวกันของศูนย์เดียวกัน โดยเทียบแบบไม่สนตัวพิมพ์ใหญ่เล็ก
+        และตัดช่องว่างหัวท้าย → ซ้ำตรงตัวได้ **422** พร้อมชื่อเดิมที่ชน
+        **รวมชื่อของรายการที่ถูกลบไปแล้ว** เพราะข้อจำกัดของฐานข้อมูลยังกันอยู่
+
+        ชื่อที่ใกล้เคียงแต่ไม่ซ้ำสร้างได้ เพราะชื่อทางคลินิกต้องแยกได้ด้วยรายละเอียดเล็กน้อย
+        หน้าจอเป็นผู้เตือนเอง
+
+        ใครสร้างได้: `HEALTH_CENTER_ADMIN` (ศูนย์ตน) · `SUPER_ADMIN` (ทุกศูนย์) ·
+        **`STAFF`** เพราะเป็นผู้ที่รู้ว่าทำอะไรไปจริง และต้องเพิ่มได้ทันทีถ้ายังไม่มีในรายการ
+        ยังต้องผ่านขอบเขตศูนย์ (ศูนย์อื่น → 403)
+      operationId: staffCreateCenterServiceProcedure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 150
+      responses:
+        "201":
+          description: สร้างแล้ว
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CenterServiceProcedure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: ชื่อซ้ำ หรือชื่อยาวเกินกำหนด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+
+  /v1/staff/procedures/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: รหัสรายการสิ่งที่ทำ
+        schema:
+          type: integer
+
+    patch:
+      tags: [Staff (ทุกบทบาท)]
+      summary: แก้ชื่อหรือสลับเปิดปิดใช้งาน
+      description: |
+        ส่งเฉพาะช่องที่ต้องการเปลี่ยน
+
+        **แก้ชื่อแล้วสะท้อนถึงประวัติเก่าด้วย** เพราะระบบไม่เก็บสำเนาชื่อไว้กับนัดหมาย
+        ประวัติของผู้รับบริการจึงดึงชื่อจากรายการปัจจุบันเสมอ
+      operationId: staffUpdateCenterServiceProcedure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 150
+                is_active:
+                  type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CenterServiceProcedure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: ชื่อซ้ำกับรายการอื่น
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags: [Staff (ทุกบทบาท)]
+      summary: ลบรายการสิ่งที่ทำ
+      description: |
+        **เป็น soft delete เสมอ** — ไม่มีการลบจริง
+
+        เหตุผล: อาจมีนัดหมายเก่าที่บันทึกรายการนี้ไว้แล้ว
+        `appointment_procedures` ชี้มาด้วย `restrict` และประวัติผู้รับบริการต้องยังอ่านชื่อได้
+
+        ถ้าต้องการเอากลับมาให้เลือกได้อีก ให้ส่ง `is_active: true` ผ่าน `PATCH` แทนการลบ
+      operationId: staffDeleteCenterServiceProcedure
+      responses:
+        "200":
+          description: ซ่อนออกจากรายการที่ให้เลือกแล้ว
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "ลบรายการสิ่งที่ทำแล้ว"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 
   /v1/staff/roster/{id}/toggle-duty:
@@ -3404,6 +3653,15 @@ components:
         allow_staff_selection:
           type: boolean
           description: เปิดให้ผู้รับบริการเลือกบุคลากรเองหรือไม่ — เปิดได้เฉพาะ capacity_type = PER_MASSEUSE
+        requires_procedure:
+          type: boolean
+          description: |
+            ต้องบันทึกสิ่งที่ทำก่อนปิดคิวหรือไม่ — ค่าเริ่มต้นเป็น `false`
+
+            บริการที่ต้องการรายละเอียดมีเพียงส่วนน้อย (เช่น ทันตกรรม โรคทั่วไป)
+            ส่วนบริการอย่างนวดหรือประคบสมุนไพรนับจำนวนครั้งจากจำนวนคิวที่ปิดได้อยู่แล้ว
+
+            **ไม่ใช่เงื่อนไขความครบ** — เปิดหรือปิดได้ตลอด ไม่กระทบการเปิดให้บริการ
         max_per_slot:
           type: integer
           nullable: true
@@ -3664,6 +3922,27 @@ components:
               type: string
         patient_right:
           $ref: "#/components/schemas/PatientRight"
+        procedures:
+          type: array
+          description: |
+            สิ่งที่ทำจริงในคิวนี้ — มีเฉพาะคิวที่บริการบังคับให้ระบุ
+            คิวที่บริการไม่บังคับจะได้รายการว่าง ไม่ใช่ null
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                description: รหัสรายการใน catalog
+              name:
+                type: string
+                description: |
+                  ชื่อจากรายการใน catalog **ปัจจุบัน** ไม่ใช่ชื่อที่บันทึกไว้ตอนนั้น
+                  เพราะระบบไม่เก็บสำเนาชื่อไว้กับนัดหมาย
+                  การแก้ชื่อใน catalog จึงสะท้อนถึงประวัติเก่าด้วย
+              performed_at:
+                type: string
+                format: date-time
+                nullable: true
 
     BookingResult:
       type: object
@@ -3952,6 +4231,16 @@ components:
             เปิดให้ผู้รับบริการเลือกบุคลากรเอง — ได้เฉพาะ capacity_type = PER_MASSEUSE
             เพราะการเลือกบุคลากรจะกลายเป็นการสัญญาว่าจะให้บริการ
             โดยที่โควตาไม่ได้รับผลกระทบ
+        requires_procedure:
+          type: boolean
+          default: false
+          description: |
+            ต้องบันทึกสิ่งที่ทำก่อนปิดคิว — ค่าเริ่มต้นเป็น `false`
+
+            ใช้กับบริการที่หนึ่งคิวมีหลายอย่างที่ต้องทำ และต้องรู้ว่าทำอะไรบ้าง
+            บริการที่นับจำนวนครั้งจากจำนวนคิวที่ปิดได้อยู่แล้ว ไม่ต้องเปิด
+
+            ไม่ใช่เงื่อนไขความครบของการตั้งค่า
         selectable_staff_ids:
           type: array
           minItems: 1
@@ -4225,6 +4514,38 @@ components:
             ID ของสิทธิการรักษาที่ต้องการใช้ (ต้องเป็นของผู้รับบริการคนนี้)
             ไม่ส่ง → ใช้สิทธิหลักของผู้รับบริการ
 
+    CenterServiceProcedure:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: รหัสรายการใน catalog
+        health_center_service_id:
+          type: integer
+          description: แถวตั้งค่าของศูนย์เจ้าของรายการ
+        name:
+          type: string
+          maxLength: 150
+        is_active:
+          type: boolean
+          description: ปิดใช้งานแล้วหายจากรายการที่หน้าปิดคิวให้เลือก แต่ยังอยู่ในรายการจัดการ
+        usage_count:
+          type: integer
+          readOnly: true
+          description: จำนวนครั้งที่ถูกเลือก — เป็นค่าที่ระบบเป็นเจ้าของ ส่งค่าใหม่ไม่ได้
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: เวลาที่ถูกเลือกล่าสุด — เป็นค่าที่ระบบเป็นเจ้าของ ส่งค่าใหม่ไม่ได้
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
     UpdateStatusRequest:
       type: object
       required: [status]
@@ -4239,6 +4560,22 @@ components:
           type: string
           maxLength: 500
           description: required when status = CANCELLED
+        procedure_ids:
+          type: array
+          items:
+            type: integer
+          description: |
+            รหัสรายการสิ่งที่ทำที่บันทึกลงคิว — **มีผลเฉพาะเมื่อ `status` = `COMPLETED`**
+
+            เงื่อนไขว่าต้องบันทึกหรือไม่ อ่านจาก `health_center_service.requires_procedure`
+            **ตอนกดปิดคิว** ไม่รับค่าจากคำขอ ไม่เช่นนั้นผู้ใช้จะส่งค่าปลอมมาเปิด/ปิดเงื่อนไขเองได้
+
+            - สวิตช์เปิดและไม่มีรายการ → 422 "กรุณาระบุสิ่งที่ทำอย่างน้อย 1 รายการ" (คิวยังเป็น CONFIRMED)
+            - รหัสของศูนย์/บริการอื่น → 422
+            - รหัสซ้ำถูกตัดออกก่อนเขียน
+            - สถานะอื่น → ไม่บันทึก แม้ส่งมาก็เช่นเดียวกัน
+
+            ผู้ที่บันทึกคือผู้เรียกคำขอนี้ และเขียน audit `RECORD_PROCEDURES`
 
     BookAppointmentRequest:
       type: object
