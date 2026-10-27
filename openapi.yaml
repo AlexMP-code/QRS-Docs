@@ -444,6 +444,20 @@ paths:
                       date:
                         type: string
                         format: date
+                      holiday:
+                        type: object
+                        nullable: true
+                        description: |
+                          วันหยุดของวันที่ขอ — เป็นข้อมูลแสดงผลเท่านั้น
+                          ไม่ได้เปลี่ยนจำนวนหรือตัวตนของช่วงเวลาที่เปิดให้จอง
+                        properties:
+                          title:
+                            type: string
+                            example: "Songkran Festival"
+                          title_th:
+                            type: string
+                            nullable: true
+                            example: "วันสงกรานต์"
                       slots:
                         type: array
                         items:

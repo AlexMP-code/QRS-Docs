@@ -64,6 +64,7 @@
 
 **หมายเหตุ available-slots (พฤติกรรมจริง):**
 - ไม่รับ `health_center_id` / `time_slot_id` — service ระบุศูนย์เอง
+- **`holiday`** — วันหยุดของวันที่ขอ (`null` หรือ `{ title, title_th }`) เป็นข้อมูลแสดงผลเท่านั้น ไม่เปลี่ยนจำนวนช่วงเวลาหรือการจอง
 - ถ้าศูนย์ไม่ใช่ ACTIVE (CLOSING/INACTIVE) → คืน **200 `slots: []`** (ไม่ใช่ error)
 - เช็ค "เปิดวันนี้ไหม" ผ่าน bit `days_mask` บน pivot `health_center_service_time_slot` + slot ต้อง `is_active`
 - `available_count` คำนวณแบบ snapshot (ไม่มี row lock) → แสดงผลอาจ stale ได้เล็กน้อย; การจองจริงจะ re-check ใน transaction ⚠️
