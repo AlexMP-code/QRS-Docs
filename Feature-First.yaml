@@ -2192,6 +2192,43 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /v1/staff/holidays/sync:
+    post:
+      tags: ["9. Reference Data"]
+      summary: "[ผู้ดูแลระบบ] สั่งซิงก์วันหยุดทันที"
+      description: |
+        ใช้เมื่อมีประกาศวันหยุดพิเศษและต้องการให้ข้อมูลตรงก่อนรอบประจำสัปดาห์
+        ไม่ระบุ `year` = ปีปัจจุบันและปีหน้า
+      operationId: staffSyncHolidays
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                year:
+                  type: integer
+                  example: 2026
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/HolidaySyncRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/patient/book:
     post:
       tags: ["6. Appointment & Queue"]
@@ -3437,6 +3474,38 @@ components:
         alcohol_ban:
           type: boolean
           example: false
+
+    HolidaySyncRun:
+      type: object
+      description: ผลของการซิงก์หนึ่งรอบ
+      properties:
+        id:
+          type: integer
+        year:
+          type: integer
+          example: 2026
+        status:
+          type: string
+          enum: [running, success, empty, failed, invalid_payload]
+        fetched:
+          type: integer
+        inserted:
+          type: integer
+        updated:
+          type: integer
+        deleted:
+          type: integer
+        message:
+          type: string
+          nullable: true
+          description: เหตุผลเมื่อไม่สำเร็จ หรือรายการที่ถูกแทนที่/ยังไม่มีคำแปล
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
 
     HolidayRecord:
       type: object
