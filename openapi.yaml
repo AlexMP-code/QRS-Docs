@@ -506,6 +506,119 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /v1/staff/holidays:
+    post:
+      tags: [SUPER_ADMIN]
+      summary: "[ผู้ดูแลระบบ] เพิ่มวันหยุดด้วยมือ"
+      description: |
+        สำหรับวันหยุดพิเศษที่ประกาศกลางปี ปีที่แหล่งภายนอกยังไม่มีข้อมูล
+        และวันหยุดท้องถิ่นของหน่วยงาน
+
+        - **ชื่อไทยบังคับ** เพราะไม่มีแหล่งภายนอกมาเติมให้
+        - ทับกับวันหยุดที่ยังเปิดใช้งานอยู่ → **422** พร้อมบอกว่าทับกับรายการใด
+          (ปิดรายการเดิมก่อนถ้าต้องการแทน)
+        - บันทึกเป็น `source = manual` — การซิงก์จะไม่ลบหรือแก้แถวนี้
+        - เขียน audit `HOLIDAY_CREATE`
+      operationId: staffCreateHoliday
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreHolidayRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HolidayRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /v1/staff/holidays/{id}:
+    patch:
+      tags: [SUPER_ADMIN]
+      summary: "[ผู้ดูแลระบบ] แก้ไขวันหยุด"
+      description: |
+        ฟิลด์ที่แก้ได้ขึ้นกับที่มาของแถว
+
+        - แถวจากแหล่งภายนอก: แก้ได้เฉพาะ `title_th` และ `is_active`
+          ฟิลด์อื่น → **422** เพราะการซิงก์รอบถัดไปจะเขียนทับอยู่ดี
+        - แถวที่บันทึกเอง: แก้ได้ทุกฟิลด์ และตรวจการทับช่วงวันที่ใหม่ให้ด้วย
+        - เขียน audit `HOLIDAY_UPDATE`
+      operationId: staffUpdateHoliday
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateHolidayRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HolidayRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags: [SUPER_ADMIN]
+      summary: "[ผู้ดูแลระบบ] ลบวันหยุดที่บันทึกเอง"
+      description: |
+        ลบได้เฉพาะแถวที่บันทึกเอง และเป็นการ **soft delete** เพราะ audit ยังต้องอ่านได้
+
+        แถวจากแหล่งภายนอก → **422** พร้อมแนะนำให้ใช้ `is_active = false` แทน
+      operationId: staffDeleteHoliday
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   # ══════════════════════════════════════════════════════════
   #  STAFF (ทุกบทบาท) — login แล้วใช้ได้ทุก role
   # ══════════════════════════════════════════════════════════
@@ -3554,6 +3667,98 @@ components:
         alcohol_ban:
           type: boolean
           example: false
+
+    HolidayRecord:
+      type: object
+      description: วันหยุดหนึ่งแถว ตามที่เก็บในฐานข้อมูล
+      properties:
+        id:
+          type: integer
+          example: 12
+        source:
+          type: string
+          enum: [thailandformats, manual]
+          example: manual
+        title:
+          type: string
+          example: "Special Local Holiday"
+        title_th:
+          type: string
+          nullable: true
+          example: "วันหยุดพิเศษของหน่วยงาน"
+        start_date:
+          type: string
+          format: date
+          example: "2026-01-02"
+        end_date:
+          type: string
+          format: date
+          example: "2026-01-02"
+        type:
+          type: string
+          example: holiday
+        alcohol_ban:
+          type: boolean
+          example: false
+        is_active:
+          type: boolean
+          example: true
+
+    StoreHolidayRequest:
+      type: object
+      required: [title_th, start_date, end_date]
+      properties:
+        title_th:
+          type: string
+          example: "วันหยุดพิเศษของหน่วยงาน"
+        title:
+          type: string
+          nullable: true
+          description: ไม่ระบุได้ ระบบจะใช้ชื่อไทยแทน
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+          description: ต้องไม่น้อยกว่า `start_date`
+        type:
+          type: string
+          nullable: true
+          example: holiday
+        alcohol_ban:
+          type: boolean
+          nullable: true
+        details:
+          type: string
+          nullable: true
+
+    UpdateHolidayRequest:
+      type: object
+      description: |
+        แถวจากแหล่งภายนอกแก้ได้เฉพาะ `title_th` และ `is_active`
+        ฟิลด์อื่นจะถูกปฏิเสธด้วย 422
+      properties:
+        title_th:
+          type: string
+          nullable: true
+        title:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        type:
+          type: string
+        alcohol_ban:
+          type: boolean
+        details:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
 
     RightType:
       type: object
