@@ -3542,6 +3542,25 @@ components:
         is_active:
           type: boolean
           example: true
+        note:
+          type: string
+          nullable: true
+          description: เหตุผลที่บันทึกเอง — มีเฉพาะแถว `source = manual`
+          example: "ประกาศเพิ่มกลางปี"
+        created_by:
+          type: integer
+          nullable: true
+          description: ผู้บันทึก — มีเฉพาะแถว `source = manual`
+        first_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: ครั้งแรกที่ระบบเห็นแถวนี้
+        last_synced_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: ครั้งล่าสุดที่การซิงก์ยืนยันแถวนี้ — null สำหรับแถวที่บันทึกเอง
 
     StoreHolidayRequest:
       type: object
@@ -3571,6 +3590,11 @@ components:
         details:
           type: string
           nullable: true
+        note:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: เหตุผลที่บันทึกเอง — ใช้กับแถว `source = manual` เท่านั้น
 
     UpdateHolidayRequest:
       type: object
@@ -3598,6 +3622,11 @@ components:
           nullable: true
         is_active:
           type: boolean
+        note:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: เหตุผลที่บันทึกเอง — แก้ได้เฉพาะแถวที่บันทึกเอง
 
     RightType:
       type: object

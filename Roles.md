@@ -452,7 +452,7 @@
 | `POST` | `/v1/staff/admin/time-slots` | เพิ่ม slot — SUPER_ADMIN only; **บังคับ `health_center_id` (422/404)**; ปฏิเสธถ้าทับกับช่วงเวลาเดิมของศูนย์นั้น |
 | `PUT` | `/v1/staff/admin/time-slots/{id}` | แก้ slot — SUPER_ADMIN only; **บังคับ `health_center_id`; slot ต้องเป็นของศูนย์นั้น (ต่าง = 404)**; ส่ง `is_active: false` ตอนสร้างได้ |
 | `DELETE` | `/v1/staff/admin/time-slots/{id}` | **ไม่รองรับการลบช่วงเวลา** — ตอบ 422 ทุกกรณี (ไม่ว่าจะมีนัดหมายหรือไม่) และ `message` ระบุ endpoint ที่ใช้แทน คือ `PATCH /api/v1/staff/admin/time-slots/{id}/toggle-status` (แทน `{id}` ด้วย id ที่เรียก) |
-| `POST` | `/v1/staff/holidays` | เพิ่มวันหยุดด้วยมือ — **ชื่อไทยบังคับ**; ทับรายการที่ยังเปิดใช้งาน → 422 พร้อมบอกว่าทับกับรายการใด; บันทึกเป็น `source=manual`; Audit Log `HOLIDAY_CREATE` |
+| `POST` | `/v1/staff/holidays` | เพิ่มวันหยุดด้วยมือ — **ชื่อไทยบังคับ**; ทับรายการที่ยังเปิดใช้งาน → 422 พร้อมบอกว่าทับกับรายการใด; บันทึกเป็น `source=manual`; ระบุ `note` (เหตุผล) ได้ ระบบเก็บ `created_by` ให้เอง; Audit Log `HOLIDAY_CREATE` |
 | `PATCH` | `/v1/staff/holidays/{id}` | แถวจากแหล่งภายนอกแก้ได้เฉพาะ `title_th` และ `is_active` (ฟิลด์อื่น → 422) · แถวที่บันทึกเองแก้ได้ทุกฟิลด์และตรวจการทับช่วงใหม่ · Audit Log `HOLIDAY_UPDATE` |
 | `DELETE` | `/v1/staff/holidays/{id}` | เฉพาะแถวที่บันทึกเอง และเป็น soft delete · แถวจากแหล่งภายนอก → 422 แนะนำให้ปิดใช้งานแทน · Audit Log `HOLIDAY_DELETE` |
 | `POST` | `/v1/staff/holidays/sync` | สั่งซิงก์ทันที ไม่ต้องรอรอบประจำสัปดาห์ · ไม่ระบุ `year` = ปีปัจจุบันและปีหน้า · คืนสถานะและจำนวนของแต่ละปี |
