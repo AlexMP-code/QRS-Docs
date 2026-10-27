@@ -485,6 +485,12 @@
 
 ---
 
+### 5.5 กระบวนการของระบบ (ไม่ใช่ endpoint)
+
+| กระบวนการ | คำสั่ง | หมายเหตุ |
+|---|---|---|
+| ซิงก์วันหยุดราชการ | `php artisan holidays:sync --year=YYYY` | รันซ้ำปีเดิมได้ ไม่เกิดแถวซ้ำ · ไม่ทับ `title_th` และ `is_active` ที่ผู้ดูแลแก้ไว้ · ทุกรอบบันทึกใน `holiday_sync_runs` |
+
 ## 6. ตารางเปรียบเทียบสิทธิ์โดยย่อ
 
 | ความสามารถ | STAFF | HC_ADMIN | SUPER_ADMIN | Patient |
@@ -637,6 +643,12 @@
 | GET | `/v1/patient/appointments` | auth:sanctum + abilities:role:patient |
 | GET | `/v1/patient/appointments/{id}` | auth:sanctum + abilities:role:patient |
 | PATCH | `/v1/patient/appointments/{id}/cancel` | auth:sanctum + abilities:role:patient |
+
+### 8.3 Reference
+
+| Method | Endpoint | Role gate (middleware) |
+|---|---|---|
+| GET | `/v1/holidays` | auth:sanctum (ทุกบทบาทที่ล็อกอิน) |
 
 ---
 
