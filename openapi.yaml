@@ -77,6 +77,11 @@ tags:
     description: |
       ประชาชน/ผู้รับบริการ — ลงทะเบียน, เข้าสู่ระบบ, ค้นหา, จองคิว, ยกเลิก,
       ดูรายชื่อบุคลากรที่เลือกได้และจองคิวกับบุคลากรที่ต้องการ (staff selection)
+  - name: Reference
+    x-roles: [SUPER_ADMIN, HEALTH_CENTER_ADMIN, STAFF, patient]
+    description: |
+      ข้อมูลอ้างอิงที่ไม่ใช่ของศูนย์ใดศูนย์หนึ่ง — ผู้ที่ล็อกอินแล้วทุกบทบาทอ่านได้
+      ตัวอย่าง: วันหยุด
 
 paths:
 
@@ -446,6 +451,60 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
       security: []
+
+  # ══════════════════════════════════════════════════════════
+  #  REFERENCE — ข้อมูลอ้างอิง ผู้ที่ล็อกอินแล้วทุกบทบาทอ่านได้
+  # ══════════════════════════════════════════════════════════
+
+  /v1/holidays:
+    get:
+      tags: [Reference]
+      summary: วันหยุดในช่วงวันที่ที่ระบุ
+      description: |
+        คืน **รายวัน** ไม่ใช่ช่วง เพื่อให้ผู้เรียกตอบได้ตรง ๆ ว่า
+        "วันนี้เป็นวันหยุดไหม" โดยไม่ต้องคำนวณช่วงเอง
+
+        - หนึ่งวันคืนหนึ่งรายการ ถ้ามีหลายรายการครอบวันเดียวกัน
+          จะเลือกรายการที่เริ่มก่อนแล้วรหัสน้อยกว่า
+        - ไม่คืนรายการที่ผู้ดูแลปิดใช้งานไว้
+        - `title_th` เป็น null ได้ ถ้ายังไม่มีชื่อไทยของรายการนั้น
+        - **ไม่เปลี่ยนวันให้บริการหรือการจอง** การปิดรับในวันหยุด
+          เป็นดุลพินิจของแต่ละศูนย์
+      operationId: listHolidays
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          example: "2026-01-01"
+        - name: to
+          in: query
+          required: true
+          description: ต้องไม่เกินหนึ่งปีนับจาก `from`
+          schema:
+            type: string
+            format: date
+          example: "2026-12-31"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Holiday"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ══════════════════════════════════════════════════════════
   #  STAFF (ทุกบทบาท) — login แล้วใช้ได้ทุก role
@@ -3470,6 +3529,28 @@ components:
           type: string
           format: date
           nullable: true
+
+    Holiday:
+      type: object
+      description: วันหยุดหนึ่งวัน — ข้อมูลแสดงผล ไม่ผูกกับการจอง
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2026-04-13"
+        title:
+          type: string
+          example: "Songkran Festival"
+        title_th:
+          type: string
+          nullable: true
+          example: "วันสงกรานต์"
+        type:
+          type: string
+          example: holiday
+        alcohol_ban:
+          type: boolean
+          example: false
 
     RightType:
       type: object
