@@ -3545,6 +3545,9 @@ components:
           type: string
           nullable: true
           example: "วันสงกรานต์"
+          description: |
+            ชื่อไทย — หาจากค่าที่ผู้ดูแลแก้ไว้ก่อน ถ้าไม่มีจึงใช้พจนานุกรมภายใน
+            ตาม `slug` ของแหล่งข้อมูล ถ้ายังไม่มีคำแปลจะเป็น null และหน้าจอใช้ `title` แทน
         type:
           type: string
           example: holiday
