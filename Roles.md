@@ -39,17 +39,17 @@
 | Method | Endpoint | Middleware | คำอธิบาย |
 |---|---|---|---|
 | `POST` | `/v1/patient/register` | `throttle:patient-register` (5 ครั้ง/นาที/IP) | ลงทะเบียน — สร้าง Patient + PatientRight (is_primary=true) + ออก token ผ่าน DB transaction |
-| `POST` | `/v1/patient/login` | `throttle:patient-login` (10 ครั้ง/นาที/เบอร์) | เข้าสู่ระบบด้วย เบอร์โทร+วันเกิด — lock 30 นาทีหลังผิดวันเกิด 5 ครั้ง |
+| `POST` | `/v1/patient/login` | `throttle:patient-login` (10 ครั้ง/นาที/เบอร์) | เข้าสู่ระบบด้วย เบอร์โทร+วันเกิด — ผิด 5 ครั้ง/30 นาทีต่อผู้เรียก+เบอร์ → 429 + `Retry-After` (ไม่ล็อกบัญชี) |
 | `GET` | `/v1/patient/me` | `auth:sanctum`, `abilities:role:patient` | ดูข้อมูลส่วนตัว (masked) |
 | `POST` | `/v1/patient/logout` | `auth:sanctum`, `abilities:role:patient` | ออกจากระบบ — ยกเลิก **เฉพาะ token ที่ใช้เรียกคำขอนี้** ไม่กระทบ token อื่นของผู้รับบริการคนเดิม |
 
 **ฟิลด์ register (บังคับ):** `cid` (13 หลัก, unique), `first_name`, `last_name`, `phone_number` (10 หลัก, unique), `birth_date`, `right_type_id` (ต้องมี `exists:right_types,id`); optional: `gender` (MALE/FEMALE/OTHER), `subdistrict`, `district`, `province`, `full_address`, `main_hospital_name`
 
-**พฤติกรรมจริงของ login (ต่างจากที่คิดกันทั่วไป):**
-- เบอร์โทรที่ **ยังไม่เคยลงทะเบียน** → คืน **HTTP 200** `{ is_registered: false, token: null, patient: null }` (ไม่ใช่ 401) พร้อม message "ไม่พบประวัติผู้รับบริการ กรุณาลงทะเบียนใหม่"
-- **วันเกิดผิด** → 401 "ข้อมูลวันเดือนปีเกิดไม่ถูกต้อง (เหลือโอกาสอีก N ครั้ง)"; ผิดครบ 5 ครั้ง → **423** ระงับ 30 นาที (`locked_until = now()+30min`)
-- เบอร์ที่ยังล็อก → 423 "บัญชีถูกระงับชั่วคราว...กรุณารออีก N นาที"
-- วันเกิดถูก → reset `failed_login_attempts=0`, `locked_until=null`, ออก token `role:patient`
+**พฤติกรรมจริงของ login:**
+- เบอร์โทรที่ **ยังไม่เคยลงทะเบียน** และ **วันเกิดผิด** → **401 ข้อความเดียวกัน** `"หมายเลขโทรศัพท์หรือวันเดือนปีเกิดไม่ถูกต้อง"` ไม่มี `is_registered` ในคำตอบ และไม่บอกว่าเบอร์นั้นมีบัญชีหรือไม่ — ผู้รับบริการที่ยังไม่มีบัญชีใช้ `POST /register` แยกได้เอง
+- ผิด 5 ครั้งต่อ **ผู้เรียก (IP) + เบอร์** ภายใน 30 นาที → **429** พร้อมหัวข้อ `Retry-After` (วินาที) · ไม่มีการล็อกบัญชีข้ามผู้เรียก
+- เข้าสู่ระบบสำเร็จ → ล้างตัวนับของผู้เรียก+เบอร์นั้น และออก token `role:patient`
+- คอลัมน์ `failed_login_attempts` / `locked_until` เป็น deprecated — ไม่ถูกอ่านหรือเขียนแล้ว
 
 ### 2.2 ค้นหาบริการและสถานที่ (Public — ไม่ต้องล็อกอิน)
 
@@ -319,10 +319,9 @@
 
 > **ข้อจำกัดที่รับไว้โดยเจตนา:** การตรวจเบอร์ซ้ำเกิดที่ `UpdatePatientContactRequest` ก่อนถึง controller จึงตอบ 422 "เบอร์นี้ถูกใช้งานแล้ว" โดยไม่ตรวจว่าผู้เรียกอยู่ในขอบเขตหรือไม่ ผลคือผู้เรียกที่รู้เลขผู้รับบริการสามารถทดสอบว่าเบอร์ใดลงทะเบียนแล้วได้ การปิดช่องนี้หมายถึงเลิกบอกว่าเบอร์ซ้ำ ซึ่งทำให้ผู้ใช้แก้ผิดแล้วไม่รู้ว่าผิดตรงไหน — ต้องตัดสินใจเรื่องความเป็นประโยชน์นี้แยก
 
-**การค้นหาสองทาง — ต่างกันที่ขอบเขต:**
-- **`?cid=` (ค้นด้วยเลขบัตรประชาชน)** = การยืนยันตัวตน **ไม่จำกัดศูนย์** เพราะผู้รับบริการไม่ได้เป็นของศูนย์ใดศูนย์หนึ่ง
-  ผู้รับบริการที่ลงทะเบียนเองที่ศูนย์อื่นต้องหาเจอที่หน้าเคาน์เตอร์นี้ได้
-  การค้นแล้วพบเขียน Audit Log `LOOKUP_PATIENT_BY_CID` (เลขบัตรประชาชนถูก mask) · ค้นแล้วไม่พบไม่เขียน
+**การค้นหาสองทาง — ขอบเขตศูนย์:**
+- **`?cid=` (ค้นด้วยเลขบัตรประชาชน)** = ถูกจำกัดศูนย์เช่นเดียวกับทางอื่นสำหรับ HC_ADMIN — คืนเฉพาะผู้รับบริการที่มีประวัติคิวในศูนย์ของผู้เรียก ( SUPER_ADMIN เท่านั้นที่ค้นข้ามศูนย์ได้)
+  การค้นแล้วพบเขียน Audit Log `LOOKUP_PATIENT_BY_CID` (เลขบัตรประชาชนถูก mask, `scope = OWN_CENTER` หรือ `CROSS_CENTER`) · ค้นแล้วไม่พบไม่เขียน
 - **`?q=` / `?phone=` / `?province=` / `?district=`** = ค้นในข้อมูลของศูนย์ **จำกัดศูนย์**
   ผูกผ่าน `whereHas('appointments', health_center_id=...)` เพราะตาราง `patients` ไม่มีคอลัมน์ศูนย์
   ผู้รับบริการที่ยังไม่เคยมาศูนย์นั้นจะไม่โผล่
@@ -380,7 +379,7 @@
 | `PATCH` | `/v1/staff/health-center-services/{id}/toggle-status` | เปิด/ปิดบริการที่ศูนย์ตนเปิดไว้ (เปิดต้องตั้งค่าครบ) |
 | `DELETE` | `/v1/staff/health-center-services/{id}` | เอาบริการออกจากศูนย์ตน (ค่าตั้งหาย) |
 | `PATCH` | `/v1/staff/patients/{id}` | แก้ไขข้อมูลผู้รับบริการเต็มรูปแบบ |
-| `GET` | `/v1/staff/admin/patients` | ค้นหาผู้รับบริการ — ด้วย `cid` ไม่จำกัดศูนย์, ด้วยชื่อ/เบอร์/ที่อยู่จำกัดศูนย์ |
+| `GET` | `/v1/staff/admin/patients` | ค้นหาผู้รับบริการ — **ทุกเงื่อนไขจำกัดศูนย์** รวมถึง `cid`; SUPER_ADMIN เท่านั้นที่ข้ามศูนย์ได้ |
 | `POST` | `/v1/staff/appointments/walk-in` | **นัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์** — หน้าที่ของผู้ดูแลศูนย์ |
 
 **สิทธิ์ที่ HC_ADMIN มีเพิ่ม (แต่ STAFF ไม่มี):** ค่าตั้งบริการรายศูนย์ทั้งสี่ทาง, ดู/จัดการ user management, ดู time slots, toggle time slot ในศูนย์ตัวเอง, แก้ health center ของตัวเอง, **สร้างนัดหมายเดินเข้ารับบริการที่หน้าเคาน์เตอร์** — ดู §4.2-4.4
@@ -394,15 +393,15 @@
 |---|---|---|
 | `GET` | `/v1/staff/admin/users` | ดูผู้ใช้ — HC_ADMIN เฉพาะศูนย์ตัวเอง; SUPER_ADMIN ทุกศูนย์ (filter ได้); response ผ่าน `AdminUserResource` — `roles` เป็น array-string, **ไม่มี** `created_at`/`updated_at`/`discord_webhook_url` |
 | `POST` | `/v1/staff/admin/users` | สร้างบัญชี **พร้อมโปรไฟล์บุคลากรใน transaction เดียว** — ต้องระบุ `name` (ชื่อบุคลากร), `category_id`, `position`, `role_ids`; **HC_ADMIN จำกัด role_ids ได้เฉพาะ STAFF (422); บังคับ health_center_id ของตัวเอง**; SUPER_ADMIN สร้างได้ทุก role/ทุกศูนย์ แต่ `health_center_id` ต้องไม่ว่าง (422) เพราะทุกบัญชีต้องมีศูนย์ |
-| `PATCH` | `/v1/staff/admin/users/{id}` | แก้บัญชี — HC_ADMIN: ห้ามแก้ SUPER_ADMIN (403); ห้ามข้ามศูนย์ (404); **ห้ามให้หรือถอด `HEALTH_CENTER_ADMIN` (403 เฉพาะผู้ที่เปลี่ยนบทบาทนั้น)**; role_ids ห้ามว่าง |
-| `DELETE` | `/v1/staff/admin/users/{id}` | ลบบัญชี — ห้ามลบตัวเอง (422); HC_ADMIN ห้ามลบ SUPER_ADMIN (403); ห้ามลบคนสุดท้าย (ดู guard); ห้ามลบถ้ามีคิว CONFIRMED ตั้งแต่วันนี้; ลบแล้ว: ปลด `staff.user_id` + staff status=INACTIVE + detach assignedServices + ลบ tokens + soft delete (ชื่อผู้ใช้ยังถูกสงวน ใช้ซ้ำไม่ได้) |
+| `PATCH` | `/v1/staff/admin/users/{id}` | แก้บัญชี — HC_ADMIN จัดการได้เฉพาะบัญชี **STAFF** ในศูนย์ตัวเอง; ถ้าเป้าหมายถือ `HEALTH_CENTER_ADMIN` หรือ `SUPER_ADMIN` → **403 ก่อนประมวลผลฟิลด์ใด ๆ** (รวมบัญชีตัวเอง; ให้ใช้ `PATCH /staff/me`); ห้ามข้ามศูนย์ (404); role_ids ห้ามว่าง; SUPER_ADMIN ยังแก้ credential ของผู้ดูแลศูนย์ได้ และ audit บันทึก `password_changed`, `username_before`/`username_after`, `health_center_id` |
+| `DELETE` | `/v1/staff/admin/users/{id}` | ลบบัญชี — ห้ามลบตัวเอง (422); HC_ADMIN ลบได้เฉพาะ **STAFF** ในศูนย์ตัวเอง; เป้าหมาย `HEALTH_CENTER_ADMIN`/`SUPER_ADMIN` → **403**; ห้ามลบคนสุดท้าย (ดู guard); ห้ามลบถ้ามีคิว CONFIRMED ตั้งแต่วันนี้; ลบแล้ว: ปลด `staff.user_id` + staff status=INACTIVE + detach assignedServices + ลบ tokens + soft delete (ชื่อผู้ใช้ยังถูกสงวน ใช้ซ้ำไม่ได้) |
 | `GET` | `/v1/staff/admin/roles` | ดู role — SUPER_ADMIN เห็นทั้งหมด; **HC_ADMIN เห็นเฉพาะ STAFF** |
 
 **การป้องกันผู้ดูแลระบบคนสุดท้าย:** ห้าม @ลบ / @ถอด role SUPER_ADMIN / @เปลี่ยน status เป็น INACTIVE ของ SUPER_ADMIN คนสุดท้ายที่ยัง ACTIVE (เช็คผ่าน `isLastActiveSuperAdmin` — นับ user ACTIVE ที่ถือ role SUPER_ADMIN ไม่รวมตัวเอง) → 422
 
 **การป้องกันผู้ดูแลศูนย์คนสุดท้าย:** ห้าม @ถอด role `HEALTH_CENTER_ADMIN` / @เปลี่ยน status เป็น INACTIVE ของผู้ดูแลศูนย์คนสุดท้ายที่ยัง ACTIVE ในศูนย์นั้น (เช็คผ่าน `isLastActiveCenterAdmin`) → 422 เพื่อไม่ให้ศูนย์ใดตกหลักการักษา
 
-**การเพิกถอน token อัตโนมัติ:** เปลี่ยนรหัสผ่าน หรือเปลี่ยนสถานะบัญชีเป็น `INACTIVE` → ลบ token ทั้งหมดของบัญชีนั้นทันที; แก้ชื่อหรือเบอร์โทร **ไม่** ลบ token
+**การเพิกถอน token อัตโนมัติ:** เปลี่ยนรหัสผ่านตัวเอง → ลบ token อื่นทั้งหมด เก็บ token ที่ใช้เรียกคำขอ; SUPER_ADMIN เปลี่ยนรหัสผ่าน/ปิดบัญชีเป้าหมาย → ลบ token ของเป้าหมายทั้งหมด; แก้ชื่อหรือเบอร์โทร **ไม่** ลบ token; ศูนย์เปลี่ยนเป็น `INACTIVE` (toggle หรือ auto-close) → ลบ token ของทุกบัญชีในศูนย์นั้น; `CLOSING` ไม่ลบ; ผู้รับบริการเปลี่ยนเบอร์โทร/เลขบัตร/วันเกิด → ลบ token ของผู้รับบริการคนนั้น
 
 ### 4.3 การจัดการ Time Slots
 
@@ -517,7 +516,7 @@
 | **อัปเดตสถานะ / ย้ายคิว / Unmask** | ทุกคิวในศูนย์ | ทุกคิวในศูนย์ | ทุกคิวทุกศูนย์ | ยกเลิกนัดตัวเอง |
 | **Patient: แก้ไขเบอร์โทร** | ✔ | ✔ | ✔ | — |
 | **Patient: แก้ไขข้อมูลเต็ม** | — | ✔ | ✔ | — |
-| **Patient: ค้นหาด้วยเลขบัตรประชาชน** | — | ✔ (ไม่จำกัดศูนย์ + Audit Log) | ✔ (ทุกศูนย์ + Audit Log) | — |
+| **Patient: ค้นหาด้วยเลขบัตรประชาชน** | — | ✔ (ศูนย์ตัวเอง + Audit Log) | ✔ (ทุกศูนย์ + Audit Log) | — |
 | **Patient: ค้นหาด้วยชื่อ/เบอร์/ที่อยู่** | — | ✔ (ต้องมีประวัติคิวในศูนย์) | ✔ (ทุกศูนย์) | — |
 | **Roster: ดูรายชื่อ** | ✔ (ศูนย์ตัวเอง) | ✔ | ✔ | — |
 | **Roster: เพิ่มบุคลากร** | — | ✔ | ✔ | — |
