@@ -419,6 +419,7 @@
 - ช่วงเวลาในศูนย์เดียวกันห้ามทับกันหรือมีเวลาเดียวกันซ้ำ แม้เปิดคนละวัน; การตรวจทับเกิดหลังล็อกแถวศูนย์เดียวกับการจอง
 - แก้เวลาเริ่ม/สิ้นสุดมีผลย้อนหลังกับนัดหมายทุกใบที่อ้างช่วงเวลานั้น (ADR-0006) · ปิด slot หรือถอดวันที่มีคิวยืนยันตั้งแต่วันนี้ → 422
 - ทุก create/update/toggle เขียน Audit Log `TIME_SLOT_CREATED` / `TIME_SLOT_UPDATED` / `TIME_SLOT_TOGGLE_STATUS` พร้อมค่า before/after (เวลา วัน label และสถานะ)
+- การ provision ศูนย์ใหม่ใช้ `php artisan time-slots:provision-standard --center=<id>` หรือ `--all`; คำสั่งเพิ่ม 6 ช่วงเวลามาตรฐานเฉพาะศูนย์ที่ยังไม่มี slot และเขียน audit `TIME_SLOT_CREATED` โดย `user_id = null`
 - เมื่อปิดใช้งาน วันให้บริการของช่วงเวลานั้น **ไม่ถูกลบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
 
 ### 4.4 การจัดการข้อมูล ศูนย์สุขภาพ
@@ -572,9 +573,10 @@
 | `SERVICE_CENTER_TOGGLE_STATUS` | สลับเปิด/ปิดบริการของศูนย์ | `from`, `to` = สถานะก่อนและหลัง | — |
 | `SERVICE_CENTER_REMOVE` | เอาบริการออกจากศูนย์ (ค่าตั้งหาย) | `from` = ค่าตั้งก่อน, `to` = null | — |
 | `SERVICE_CENTER_PROCEDURE_REQUIREMENT_UPDATE` | ตั้งการบังคับระบุสิ่งที่ทำให้ทั้งหมวด (บริการละหนึ่งแถว) | `from`, `to` = ค่าตั้งก่อนและหลัง | — |
-| `TIME_SLOT_CREATED` | สร้างช่วงเวลา | `before=null`, `after` = เวลา, วัน, label, สถานะ | — |
+| `TIME_SLOT_CREATED` | สร้างช่วงเวลา (รวม provisioning มาตรฐานโดยระบบ) | `before=null`, `after` = เวลา, วัน, label, สถานะ | — |
 | `TIME_SLOT_UPDATED` | แก้ช่วงเวลา | `before/after` = เวลา, วัน, label, สถานะ | — |
 | `TIME_SLOT_TOGGLE_STATUS` | เปิด/ปิดช่วงเวลา | `before/after` = สถานะและค่าเต็ม | — |
+| `TIME_SLOT_DAYS_BACKFILL` | backfill วันจาก pivot เดิม | `before/after` = `days_mask` และ `days`; `user_id = null` | — |
 | `RECORD_PROCEDURES` | ปิดคิวพร้อมบันทึกสิ่งที่ทำ | `procedures[]` = `{procedure_id, name}` ของรายการที่บันทึกจริง | **ไม่ mask** — ชื่อสิ่งที่ทำต้องอ่านย้อนได้ |
 | `LOOKUP_PATIENT_BY_CID` | ค้นผู้รับบริการด้วยเลขบัตรประชาชน **แล้วพบ** | `searched_cid`, `scope` (`OWN_CENTER`/`CROSS_CENTER`) | cid mask; ค้นแล้วไม่พบไม่เขียน |
 | `UPDATE_DISCORD_WEBHOOK` | ตั้งหรือยกเลิกการแจ้งเตือนของศูนย์ | `set` = ตั้งใหม่หรือลบ | **ไม่เก็บ URL เด็ดขาด** — เว็บฮุกเป็นค่าลับ |
