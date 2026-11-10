@@ -1304,9 +1304,10 @@ token ที่ถูกยกเลิกแล้วใช้ซ้ำไม�
 > เหตุผลเดียวกับที่ลบบริการไม่ได้ — ปิดแล้วนัดหมายที่ผู้รับบริการถือไว้จะถูกทิ้งโดยไม่มีคำเตือน
 
 **Audit Log:**
-- `TIME_SLOT_CREATED` — before = null, after = ค่าเต็ม
+- `TIME_SLOT_CREATED` — before = null, after = ค่าเต็ม (รวม provisioning มาตรฐานโดยระบบ)
 - `TIME_SLOT_UPDATED` — before/after = เวลา, วัน, label, สถานะ
 - `TIME_SLOT_TOGGLE_STATUS` — before/after = สถานะ (และค่าเต็ม)
+- `TIME_SLOT_DAYS_BACKFILL` — before/after = `days_mask` และ `days`; `user_id = null`
 - เก็บ `user_id`, `health_center_id`, `target_id`, `target_model = TimeSlot` และ IP/User-Agent
 
 **การตั้งค่าบริการที่อ้างช่วงเวลา:**
@@ -1318,8 +1319,9 @@ token ที่ถูกยกเลิกแล้วใช้ซ้ำไม�
 **การย้ายข้อมูล (Phase 1 → Phase 2):**
 - Phase 1 เพิ่ม `time_slots.days_mask` และคำสั่ง `time-slots:days-preflight` / `time-slots:days-backfill`
 - ต้องรัน preflight, แก้ conflict ด้วย mapping, แล้ว commit backfill ให้ครบก่อนเปิดสิทธิ์ HC_ADMIN
-- Phase 2 เปลี่ยนการอ่านมาใช้ `time_slots.days_mask` และเปิด create/edit ให้ HC_ADMIN
+- Phase 2 เปลี่ยนการอ่านมาใช้ `time_slots.days_mask`, บังคับ `days_mask NOT NULL DEFAULT 31`, และเปิด create/edit ให้ HC_ADMIN
 - คอลัมน์ `days_mask` บน pivot ยังอยู่แต่ไม่ถูกอ่าน/เขียนแล้ว เก็บไว้หนึ่งรุ่นเพื่อ rollback
+- ฐานข้อมูลใหม่ไม่ต้อง preflight/backfill: migrate แล้วใช้ `time-slots:provision-standard --all` (หรือ `--center=<id>`) เพื่อสร้าง 6 ช่วงเวลามาตรฐาน; คำสั่งนี้ไม่ลบของเดิมและข้ามศูนย์ที่มี slot อยู่แล้ว
 - runbook: `docs/operations/time-slot-days-migration.md` ใน repo หลัก
 
 `StaffTimeSlotController` · `StaffTimeSlotManagementService` · `OperatingDayService` · ADR-0005/0006
