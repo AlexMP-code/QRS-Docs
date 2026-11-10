@@ -2773,6 +2773,7 @@ paths:
         - ไม่มีการดูข้ามศูนย์ในคำขอเดียว — ผู้ดูแลระบบเลือกศูนย์จาก `GET /v1/staff/health-centers`
         - เฉพาะ SUPER_ADMIN / HEALTH_CENTER_ADMIN เท่านั้น (STAFF เข้าไม่ได้ — 403)
         - ทุกรายการมี `health_center` ของตัวเอง (เฉพาะ endpoint นี้ — ที่อื่นที่ฝัง time_slot เช่น นัดหมายของผู้รับบริการ จะไม่มี field นี้)
+        - คืน `days` (อ่านจาก `time_slots.days_mask`), `appointment_count` และ `has_future_confirmed`
       operationId: staffListTimeSlots
       parameters:
         - $ref: "#/components/parameters/HealthCenterIdRequired"
@@ -2789,7 +2790,7 @@ paths:
                       data:
                         type: array
                         items:
-                          $ref: "#/components/schemas/TimeSlotResource"
+                          $ref: "#/components/schemas/StaffTimeSlotResource"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -2798,14 +2799,18 @@ paths:
           $ref: "#/components/responses/Unauthorized"
 
     post:
-      tags: [SUPER_ADMIN]
+      tags: [HEALTH_CENTER_ADMIN, SUPER_ADMIN]
       summary: เพิ่มช่วงเวลาใหม่
       description: |
         เพิ่ม time slot ให้ศูนย์สุขภาพ (label และ sort_order คำนวณอัตโนมัติจาก start_time/end_time)
-        - SUPER_ADMIN เท่านั้น
-        - **ต้องระบุ health_center_id** — ไม่ส่ง = 422, ศูนย์ไม่มีอยู่ = 404
+        - HC_ADMIN สร้างในศูนย์ของตัวเอง ไม่ต้องส่ง health_center_id
+        - SUPER_ADMIN **ต้องระบุ health_center_id** — ไม่ส่ง = 422, ศูนย์ไม่มีอยู่ = 404
+        - `days` ไม่ส่ง = จันทร์–ศุกร์; ส่งได้ 1–7 วัน ห้ามว่าง/ซ้ำ และต้องอยู่ในช่วง 1–7
+        - `label` ไม่ส่ง = สร้างอัตโนมัติ; ส่งมาได้ไม่เกิน 50 ตัวอักษร
         - ห้าม start_time/end_time **ทับซ้อน** กับ slot ที่มีอยู่แล้วในศูนย์เดียวกัน (ตรวจการทับจริง — ช่วงที่ต่อกันพอดีเช่น 09:00-09:30 กับ 09:30-10:00 ไม่ถือว่าทับ; ทับกับ slot ของศูนย์อื่นได้)
+        - การตรวจทับเกิดหลังล็อกแถวศูนย์เดียวกับการจอง
         - ส่ง `is_active: false` เพื่อสร้างช่วงเวลาที่ปิดใช้งานตั้งแต่แรก (ไม่ส่ง = เปิดใช้งาน)
+        - Audit Log `TIME_SLOT_CREATED` พร้อม before/after
       operationId: staffCreateTimeSlot
       requestBody:
         required: true
@@ -2827,7 +2832,7 @@ paths:
                         type: string
                         example: "เพิ่มช่วงเวลาสำเร็จ"
                       data:
-                        $ref: "#/components/schemas/TimeSlotResource"
+                        $ref: "#/components/schemas/StaffTimeSlotResource"
         "422":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -2843,14 +2848,17 @@ paths:
         description: Time Slot ID
 
     put:
-      tags: [SUPER_ADMIN]
+      tags: [HEALTH_CENTER_ADMIN, SUPER_ADMIN]
       summary: แก้ไขช่วงเวลา
       description: |
-        แก้ไข time slot (start_time, end_time, is_active)
-        - SUPER_ADMIN เท่านั้น
-        - **ต้องระบุ health_center_id และ slot ต้องเป็นของศูนย์นั้น** — ไม่ส่ง = 422, ศูนย์ไม่มี = 404, slot ของศูนย์อื่น = 404
-        - label และ sort_order จะถูกคำนวณใหม่ถ้าแก้ start/end time
+        แก้ไข time slot (start_time, end_time, label, days, is_active)
+        - HC_ADMIN แก้ได้เฉพาะศูนย์ของตัวเอง; SUPER_ADMIN **ต้องระบุ health_center_id และ slot ต้องเป็นของศูนย์นั้น** — ไม่ส่ง = 422, ศูนย์ไม่มี = 404, slot ของศูนย์อื่น = 404
+        - ส่งเฉพาะช่องที่ต้องการเปลี่ยน; ถ้าส่ง start_time หรือ end_time เพียงด้านเดียว ระบบเทียบกับค่าที่มีอยู่เดิมและบังคับ end_time > start_time
+        - label และ sort_order จะถูกคำนวณใหม่ถ้าแก้ start/end time และไม่ได้ส่ง label มา
         - ห้ามแก้ให้ **ทับซ้อน** กับ slot อื่นของศูนย์เดียวกัน (ตรวจการทับจริง) — แก้เป็นเวลาเดิมของตัวเองได้
+        - แก้เวลาเป็น retroactive: นัดหมายทุกใบที่อ้างช่วงเวลานี้แสดงเวลาใหม่ทันที (ADR-0006)
+        - ถอดวันที่มีคิวยืนยันตั้งแต่วันนี้ หรือปิด slot ที่มีคิว → 422
+        - Audit Log `TIME_SLOT_UPDATED` พร้อม before/after
       operationId: staffUpdateTimeSlot
       requestBody:
         required: true
@@ -2872,7 +2880,7 @@ paths:
                         type: string
                         example: "แก้ไขช่วงเวลาสำเร็จ"
                       data:
-                        $ref: "#/components/schemas/TimeSlotResource"
+                        $ref: "#/components/schemas/StaffTimeSlotResource"
         "404":
           description: ไม่พบช่วงเวลาของศูนย์ที่ระบุ
           content:
@@ -2921,13 +2929,15 @@ paths:
         description: Time Slot ID
 
     patch:
-      tags: [HEALTH_CENTER_ADMIN]
+      tags: [HEALTH_CENTER_ADMIN, SUPER_ADMIN]
       summary: เปิด/ปิดสถานะช่วงเวลา
       description: |
         สลับ is_active ของ time slot (true ↔ false)
-        - **นี่คือวิธีที่ถูกต้องแทนการลบช่วงเวลา** — เมื่อปิด ช่วงเวลาจะหายจากผู้รับบริการทันทีทุกบริการของศูนย์ แต่วันให้บริการที่ตั้งไว้กับช่วงเวลานี้ **ไม่ถูกลบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
+        - **นี่คือวิธีที่ถูกต้องแทนการลบช่วงเวลา** — เมื่อปิด ช่วงเวลาจะหายจากผู้รับบริการทันทีทุกบริการของศูนย์ แต่วันให้บริการของช่วงเวลานี้ **ไม่ถูกลบ** และกลับมาใช้ทันทีเมื่อเปิดคืน
         - HC_ADMIN: เฉพาะศูนย์ของตนเอง (ข้ามศูนย์ไม่ได้ — 404)
         - SUPER_ADMIN: **ต้องระบุ health_center_id** — ไม่ส่ง = 422, ศูนย์ไม่มี = 404, slot ของศูนย์อื่น = 404
+        - ปิดไม่ได้ถ้ามีนัดหมาย CONFIRMED ตั้งแต่วันนี้ → 422
+        - Audit Log `TIME_SLOT_TOGGLE_STATUS` พร้อม before/after
       operationId: staffToggleTimeSlotStatus
       requestBody:
         content:
@@ -4608,7 +4618,7 @@ components:
         2. โควตาตัวเลข ถ้าวิธีที่เลือกต้องใช้ — `max_per_slot` เมื่อ PER_SLOT, `max_per_day` เมื่อ PER_DAY
         3. ถ้าเปิด `allow_staff_selection` ต้องเป็น PER_MASSEUSE
         4. ถ้าเปิด `allow_staff_selection` ต้องมี `selectable_staff_ids` อย่างน้อย 1 คน
-        5. `time_slots` อย่างน้อย 1 ช่วง และแต่ละช่วงต้องมีวันอย่างน้อย 1 วัน
+        5. `time_slots` อย่างน้อย 1 ช่วง — ช่วงเวลาต้องเป็นของศูนย์นี้และเปิดใช้งาน; วันให้บริการมาจากช่วงเวลา บริการกำหนดวันเองไม่ได้
         6. `assignee_ids` อย่างน้อย 1 คน — ผู้รับผิดชอบบริการของศูนย์นี้
       properties:
         service_id:
@@ -4655,7 +4665,7 @@ components:
         time_slots:
           type: array
           minItems: 1
-          description: ช่วงเวลาที่ศูนย์นี้เปิดให้บริการ พร้อมวันในสัปดาห์ต่อช่วง
+          description: ช่วงเวลาที่ศูนย์นี้เปิดให้บริการ พร้อมวันในสัปดาห์ต่อช่วง (days มาจากช่วงเวลา; ส่งมาได้แต่ต้องตรง)
           items:
             $ref: "#/components/schemas/ServiceTimeSlotDayInput"
         assignee_ids:
@@ -4680,16 +4690,19 @@ components:
 
     ServiceTimeSlotDayInput:
       type: object
-      description: รายการ (ช่วงเวลา, วันเปิดให้บริการ) สำหรับเชื่อมบริการ
-      required: [time_slot_id, days]
+      description: |
+        รายการ (ช่วงเวลา, วันให้บริการ) สำหรับเชื่อมบริการ
+        `days` เป็นช่องทาง compatibility — ถ้าส่งมา ต้องตรงกับวันของช่วงเวลานั้น (ไม่ตรง = 422)
+        ถ้าไม่ส่ง ระบบใช้ `days` ของช่วงเวลา
+      required: [time_slot_id]
       properties:
         time_slot_id:
           type: integer
-          description: ID ของช่วงเวลา (ต้องมีอยู่ในระบบ)
+          description: ID ของช่วงเวลา (ต้องเป็นของศูนย์นี้และเปิดใช้งาน)
         days:
           type: array
           minItems: 1
-          description: วันเปิดให้บริการรายสัปดาห์ (1=จันทร์ … 7=อาทิตย์)
+          description: วันเปิดให้บริการรายสัปดาห์ (1=จันทร์ … 7=อาทิตย์) — ต้องตรงกับวันของช่วงเวลา
           items:
             type: integer
             minimum: 1
@@ -4727,7 +4740,7 @@ components:
           description: ค่าเดียวกับ `id` — เก็บไว้ทั้งคู่เพื่อให้ผู้เรียกสลับคีย์ได้
         days:
           type: array
-          description: วันในสัปดาห์ที่เปิดให้บริการ (1=วันจันทร์ … 7=วันอาทิตย์) ถอดจาก bitmask
+          description: วันในสัปดาห์ที่เปิดให้บริการ (1=วันจันทร์ … 7=วันอาทิตย์) อ่านจาก `time_slots.days_mask`
           items:
             type: integer
             minimum: 1
@@ -5063,7 +5076,7 @@ components:
 
     TimeSlotResource:
       type: object
-      description: ข้อมูลช่วงเวลา (ใช้ใน response ของ time-slot endpoints) — resource ไม่คืน health_center_id
+      description: ข้อมูลช่วงเวลา (ใช้ใน response ที่ไม่ใช่รายการจัดการ slot) — resource ไม่คืน health_center_id
       properties:
         id:
           type: integer
@@ -5081,13 +5094,38 @@ components:
         is_active:
           type: boolean
 
+    StaffTimeSlotResource:
+      allOf:
+        - $ref: "#/components/schemas/TimeSlotResource"
+        - type: object
+          description: |
+            ช่วงเวลาสำหรับหน้าจัดการของเจ้าหน้าที่ — เพิ่มวันให้บริการและผลกระทบนัดหมาย
+            `days` อ่านจาก `time_slots.days_mask` (ไม่ใช่ pivot รายบริการ)
+          properties:
+            days:
+              type: array
+              description: วันให้บริการ (1=จันทร์ … 7=อาทิตย์)
+              items:
+                type: integer
+                minimum: 1
+                maximum: 7
+              example: [1, 2, 3, 4, 5]
+            appointment_count:
+              type: integer
+              description: จำนวนนัดหมายทุกสถานะที่อ้างช่วงเวลานี้
+              example: 8
+            has_future_confirmed:
+              type: boolean
+              description: มีนัดหมาย CONFIRMED ตั้งแต่วันนี้หรือไม่
+              example: true
+
     StoreTimeSlotRequest:
       type: object
-      required: [health_center_id, start_time, end_time]
+      required: [start_time, end_time]
       properties:
         health_center_id:
           type: integer
-          description: ศูนย์เป้าหมาย — จำเป็น (SUPER_ADMIN เท่านั้น) ไม่ส่ง = 422, ศูนย์ไม่มีอยู่ = 404
+          description: ศูนย์เป้าหมาย — **บังคับเฉพาะ SUPER_ADMIN** (ไม่ส่ง = 422, ศูนย์ไม่มีอยู่ = 404); HC_ADMIN ไม่ต้องส่ง
         start_time:
           type: string
           description: เวลาเริ่มต้น (HH:MM)
@@ -5096,28 +5134,55 @@ components:
           type: string
           description: เวลาสิ้นสุด (HH:MM, ต้องมากกว่า start_time)
           example: "10:00"
+        label:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: ชื่อช่วงเวลา — ไม่ส่ง = สร้างอัตโนมัติจากเวลา
+          example: "รอบเช้า"
+        days:
+          type: array
+          description: วันให้บริการ (1=จันทร์ … 7=อาทิตย์) — ไม่ส่ง = จันทร์–ศุกร์; ห้ามว่างหรือซ้ำ
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+          example: [1, 2, 3, 4, 5]
         is_active:
           type: boolean
           description: สร้างแล้วเปิดใช้หรือปิดใช้ทันที (ไม่ส่ง = เปิดใช้)
 
     UpdateTimeSlotRequest:
       type: object
-      required: [health_center_id]
       properties:
         health_center_id:
           type: integer
-          description: "ศูนย์เจ้าของช่วงเวลา (SUPER_ADMIN เท่านั้น) — ช่วงเวลาต้องเป็นของศูนย์นี้ ไม่ส่ง = 422, ต่างศูนย์ = 404"
+          description: "ศูนย์เจ้าของช่วงเวลา — **บังคับเฉพาะ SUPER_ADMIN**; ช่วงเวลาต้องเป็นของศูนย์นี้ ไม่ส่ง = 422, ต่างศูนย์ = 404; HC_ADMIN ไม่ต้องส่ง"
         start_time:
           type: string
-          description: เวลาเริ่มต้นใหม่ (HH:MM)
+          description: เวลาเริ่มต้นใหม่ (HH:MM) — ส่งด้านเดียวได้ ระบบเทียบกับ end_time เดิม
           example: "09:00"
         end_time:
           type: string
-          description: เวลาสิ้นสุดใหม่ (HH:MM)
+          description: เวลาสิ้นสุดใหม่ (HH:MM) — ต้องมากกว่า start_time (เดิมหรือใหม่)
           example: "10:00"
+        label:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: ชื่อช่วงเวลาใหม่ — ไม่ส่งและแก้เวลา = สร้างใหม่; ไม่ส่งและไม่แก้เวลา = คงเดิม
+          example: "รอบบ่าย"
+        days:
+          type: array
+          description: วันให้บริการใหม่ (1=จันทร์ … 7=อาทิตย์) — ถอดวันที่มีคิวยืนยันตั้งแต่วันนี้ไม่ได้
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+          example: [1, 3, 5]
         is_active:
           type: boolean
-          description: เปิด/ปิดสถานะช่วงเวลา
+          description: เปิด/ปิดสถานะช่วงเวลา — ปิดไม่ได้ถ้ามีคิว CONFIRMED ตั้งแต่วันนี้
 
     UserResource:
       type: object
